@@ -2,6 +2,8 @@
 
 A secure, fast, and anonymous BitTorrent client built with Python.
 
+<img width="472" height="532" alt="Screenshot 2025-11-25 185821" src="https://github.com/user-attachments/assets/27c725f6-763f-4f55-ae7c-97b396c6504e" />
+
 ## Features
 
 *   **Secure & Anonymous:** Prioritizes user privacy by routing traffic through a proxy, hiding your IP from peers.
