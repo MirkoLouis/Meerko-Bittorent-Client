@@ -1,4 +1,6 @@
-from meerko_bittorent.cli import main
+from meerko_bittorent.ui import App
 
 if __name__ == "__main__":
-    main()
+    app = App()
+    app.mainloop()
+
