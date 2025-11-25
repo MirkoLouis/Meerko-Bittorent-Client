@@ -28,7 +28,7 @@ A secure, fast, and anonymous BitTorrent client built with Python.
 
 ## Usage
 
-To download a torrent, run the client from the command line, providing a path to a `.torrent` file or a magnet link.
+To download a torrent, you can run the client from the command line, providing a path to a `.torrent` file or a magnet link, or use the built exe in the releases section of the repository, the recommended way for most people.
 
 ```bash
 python -m meerko_bittorent <torrent_source> <save_path>
