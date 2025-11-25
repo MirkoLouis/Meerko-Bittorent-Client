@@ -1,0 +1,10 @@
+[Proxy]
+# Type of proxy: socks5 or http
+type = socks5
+# Proxy host or IP address
+host = your-proxy-host
+# Proxy port
+port = your-proxy-port
+# Optional: username and password for the proxy
+# username = your-username
+# password = your-password
