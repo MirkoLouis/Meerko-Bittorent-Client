@@ -7,7 +7,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Meerko Bittorent Client")
-        self.geometry("700x500")
+        self.geometry("470x500")
         self.client = None
         self.download_thread = None
 
