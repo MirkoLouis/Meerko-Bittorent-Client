@@ -7,7 +7,7 @@ This document provides a detailed reference for all the command-line arguments a
 The main command to run the client is:
 
 ```bash
-python -m meerko_bittorent <torrent_source> <save_path> [options]
+python -m meerko_bittorent "<torrent_source>" "<save_path>" [options]
 ```
 
 ### Positional Arguments

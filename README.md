@@ -11,10 +11,10 @@ A secure, fast, and anonymous BitTorrent client built with Python.
 
 ## Installation
 
-1.  **Create and activate a Python 3.11 virtual environment:**
+1.  **Create and activate a Python 3.10 virtual environment:**
     ```bash
     # Create the virtual environment
-    py -3.11 -m venv .venv
+    py -3.10 -m venv .venv
     # Activate the virtual environment (on Windows)
     .venv\Scripts\activate
     ```
