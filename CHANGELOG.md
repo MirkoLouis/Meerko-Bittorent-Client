@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+*   Nix flake: `nix run`, `nix develop` dev shell and `nix flake check` (builds the package and runs the tests).
+*   `pyproject.toml` packaging with a `meerko-bittorent` entry point.
+*   Linux AppImage build and a cross-platform PyInstaller spec.
+*   GitHub Actions: CI on every push and pull request; tag-driven releases with the Windows executable,
+    the AppImage, and GPG-signed `SHA256SUMS`.
+*   Smoke tests, license-header test and a validated version-stamping script.
+*   GPL-3.0-or-later license and third-party notices for bundled components.
+
+### Changed
+
+*   Line endings are normalized to LF via `.gitattributes`.
+*   The version now lives in `meerko_bittorent/__init__.py` (`__version__`) and is stamped from the git tag at release.
+*   `libtorrent` is pinned to 2.0.11 in `requirements.txt` (Windows builds).
+
 ## [0.7.0] - 2025-11-25
 
 ### Changed
