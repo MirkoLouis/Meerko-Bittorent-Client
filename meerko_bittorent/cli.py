@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 import argparse
 import libtorrent as lt
 from meerko_bittorent.client import MeerkoClient

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meerko-bittorent"
+dynamic = ["version"]
+description = "A privacy- and performance-focused BitTorrent client built on libtorrent"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "Mark Leo Ocsio Bagood" }]
+# libtorrent is provided per platform (Nix, apt, or requirements.txt on Windows), not via pip metadata
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/MirkoLouis/Meerko-Bittorent-Client"
+
+[project.gui-scripts]
+meerko-bittorent = "meerko_bittorent.__main__:main"
+
+[tool.setuptools]
+# Explicit: flat-layout auto-discovery would trip over packaging/ and tests/
+packages = ["meerko_bittorent"]
+
+[tool.setuptools.dynamic]
+version = { attr = "meerko_bittorent.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

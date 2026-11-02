@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 import tkinter as tk
 from tkinter import ttk, filedialog
 import threading
