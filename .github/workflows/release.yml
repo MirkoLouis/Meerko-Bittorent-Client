@@ -54,7 +54,7 @@ jobs:
           mkdir -p release
           mv dist/meerko-bittorent.exe "release/Meerko-Bittorent-${version}-windows-x86_64.exe"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: release/
@@ -92,7 +92,7 @@ jobs:
           mkdir -p release
           mv dist/*.AppImage release/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: appimage
           path: release/
@@ -168,7 +168,7 @@ jobs:
 
       - name: Upload dry-run bundle
         if: github.event_name != 'push'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dry-run-release
           path: release/
