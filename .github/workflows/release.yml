@@ -31,7 +31,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-python@v6
@@ -64,7 +64,7 @@ jobs:
   appimage:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -108,7 +108,7 @@ jobs:
       SIGNING_KEY_FINGERPRINT: A831ABC3E4CA419F45A5F0CAAE8BE4A90597C13C
     steps:
       # The checkout provides CHANGELOG.md for the release notes
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
