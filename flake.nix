@@ -33,7 +33,7 @@
                 pyproject = true;
                 build-system = [ python.pkgs.setuptools ];
                 dependencies = runtimeDependencies python.pkgs;
-                nativeCheckInputs = [ python.pkgs.pytestCheckHook ];
+                nativeCheckInputs = [ python.pkgs.pytestCheckHook python.pkgs.pyyaml ];
                 pythonImportsCheck = [ "meerko_bittorent" ];
                 meta = {
                     description = "Privacy- and performance-focused BitTorrent client";
@@ -56,7 +56,7 @@
             devShells.${system}.default = pkgs.mkShell {
                 packages = [
                     (python.withPackages (pythonPackages:
-                        runtimeDependencies pythonPackages ++ [ pythonPackages.pytest ]))
+                        runtimeDependencies pythonPackages ++ [ pythonPackages.pytest pythonPackages.pyyaml ]))
                 ];
             };
 

@@ -8,7 +8,9 @@ set -euo pipefail
 
 # Same accepted versions as packaging/stamp_version.py (keep the two patterns identical)
 readonly VERSION_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?(\.dev[0-9]+)?$'
-readonly APPIMAGETOOL_URL='https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage'
+# Pinned appimagetool release; the digest matches GitHub's published sha256 for this asset
+readonly APPIMAGETOOL_URL='https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage'
+readonly APPIMAGETOOL_SHA256='ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0'
 
 # Validate the single version argument before using it in any path
 if [ "$#" -ne 1 ] || [[ ! "$1" =~ $VERSION_PATTERN ]]; then
@@ -40,11 +42,15 @@ cp -- "$appimage_files/meerko-bittorent.desktop" "$app_dir/"
 cp -- "$appimage_files/meerko-bittorent.png" "$app_dir/"
 cp -- "$appimage_files/meerko-bittorent.png" "$app_dir/.DirIcon"
 
-# Download appimagetool into a temporary directory that is always cleaned up
+# Download appimagetool into a temporary directory that is always cleaned up, and verify it before use
 tool_dir="$(mktemp -d)"
 readonly tool_dir
 trap 'rm -rf -- "$tool_dir"' EXIT
 curl --fail --location --silent --show-error --output "$tool_dir/appimagetool" -- "$APPIMAGETOOL_URL"
+if ! echo "$APPIMAGETOOL_SHA256  $tool_dir/appimagetool" | sha256sum --check --status; then
+    echo "appimagetool checksum mismatch; refusing to run it" >&2
+    exit 1
+fi
 chmod +x -- "$tool_dir/appimagetool"
 
 # Build; extract-and-run avoids needing FUSE on CI runners and in containers

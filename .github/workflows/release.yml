@@ -14,8 +14,9 @@ on:
         required: true
         default: "1.0.0.dev0"
 
+# Read-only by default; only the release job is granted write access
 permissions:
-  contents: write
+  contents: read
 
 # Untrusted text (tag name or dispatch input) only ever reaches scripts as this env var;
 # packaging/stamp_version.py and build-appimage.sh validate it before use
@@ -31,6 +32,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
@@ -62,6 +65,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Install Python, libtorrent and Tk
         run: |
@@ -97,11 +102,15 @@ jobs:
   release:
     needs: [windows, appimage]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       SIGNING_KEY_FINGERPRINT: A831ABC3E4CA419F45A5F0CAAE8BE4A90597C13C
     steps:
       # The checkout provides CHANGELOG.md for the release notes
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - uses: actions/download-artifact@v4
         with:
@@ -137,16 +146,28 @@ jobs:
               echo "See CHANGELOG.md" > notes.md
           fi
 
+      # a/b/rc/dev versions are pre-releases and must never become "Latest"
+      - name: Classify release
+        id: classify
+        run: |
+          if [[ "${RELEASE_VERSION#v}" =~ (a|b|rc|\.dev)[0-9]+$ ]]; then
+              echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+              echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Publish only on a real tag push; a manual dispatch from a tag ref stays a dry run
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: release/*
           body_path: notes.md
           draft: false
+          prerelease: ${{ steps.classify.outputs.prerelease == 'true' }}
 
       - name: Upload dry-run bundle
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        if: github.event_name != 'push'
         uses: actions/upload-artifact@v4
         with:
           name: dry-run-release
