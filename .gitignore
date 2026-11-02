@@ -31,6 +31,7 @@ MANIFEST
 #  Refer to https://pyinstaller.readthedocs.io/en/stable/usage.html#options
 #  for more details.
 *.spec
+!packaging/*.spec
 
 
 # Installer logs
@@ -113,3 +114,11 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Project
+docs/
+result
+result-*
+.venv-linux/
+*.AppImage
+AppDir/
