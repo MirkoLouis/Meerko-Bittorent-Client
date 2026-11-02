@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# AppImage entry point: launch the bundled PyInstaller build, forwarding all arguments
+
+# The AppImage runtime sets APPDIR; fall back to this script's directory for extracted runs
+if [ -z "${APPDIR:-}" ]; then
+    APPDIR="$(dirname "$(readlink -f "$0")")"
+fi
+
+exec "$APPDIR/usr/lib/meerko-bittorent/meerko-bittorent" "$@"

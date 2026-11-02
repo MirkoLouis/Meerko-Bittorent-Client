@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Meerko Bittorent
+Comment=Privacy- and performance-focused BitTorrent client
+Exec=meerko-bittorent
+Icon=meerko-bittorent
+Categories=Network;FileTransfer;P2P;
+Terminal=false
