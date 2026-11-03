@@ -147,3 +147,12 @@ def test_form_messages_in_screen_order(host, port_text, username, password, requ
     with pytest.raises(InputError) as raised:
         ui.form_to_proxy(True, "socks5", host, port_text, username, password, require_password=require_password)
     assert str(raised.value) == expected
+
+
+# A cancelled chooser leaves the field untouched; a chosen path fills it once (Review Focus 1)
+def test_browse_callback_ignores_none():
+    written = []
+    ui.apply_chosen_path(written.append, None)
+    assert written == []
+    ui.apply_chosen_path(written.append, "/home/u/a.torrent")
+    assert written == ["/home/u/a.torrent"]

@@ -93,3 +93,8 @@ def test_windows_job_ships_cli_exe_and_smoke_tests_it(release_workflow):
 # The Linux frozen CLI is smoke-tested before it is packed into the AppImage
 def test_appimage_job_smoke_tests_cli(release_workflow):
     assert "dist/meerko-bittorent/meerko-bittorent-cli --version" in job_scripts(release_workflow["jobs"]["appimage"])
+
+
+# The AppImage bundles jeepney so Linux users get the native file chooser
+def test_appimage_job_installs_jeepney(release_workflow):
+    assert "python3-jeepney" in job_scripts(release_workflow["jobs"]["appimage"])

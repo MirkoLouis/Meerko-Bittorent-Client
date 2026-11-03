@@ -17,6 +17,7 @@ from meerko_bittorent.config import default_config_path, insecure_password_file,
 from meerko_bittorent.driver import Outcome, drive_download
 from meerko_bittorent.engine import Engine
 from meerko_bittorent.errors import AlreadyRunningError, InputError, MeerkoError
+from meerko_bittorent.file_dialogs import DialogKind, choose_path
 from meerko_bittorent.proxy import ProxyKind, ProxySettings, parse_proxy_kind, validate_port_text
 from meerko_bittorent.sources import prepare_save_path, prepare_source
 from meerko_bittorent.status import DownloadStatus, format_status
@@ -83,6 +84,24 @@ def form_to_proxy(
     if require_password and settings.username and not settings.password:
         raise InputError("Enter the proxy password for this user (it is never saved)")
     return settings
+
+
+# The Tk dialogs: the native Explorer dialog on Windows, Tk's own dialog as the Linux fallback
+def tk_chooser(kind: DialogKind) -> str | None:
+    # Save locations are folders; sources are .torrent files
+    if kind is DialogKind.SAVE_FOLDER:
+        chosen = filedialog.askdirectory()
+    else:
+        chosen = filedialog.askopenfilename(filetypes=[("Torrent files", "*.torrent"), ("All files", "*.*")])
+    # tkinter returns "" or () when cancelled
+    return chosen if isinstance(chosen, str) and chosen else None
+
+
+# Put a chosen path into its field; a cancelled chooser (None) leaves the field as it was
+def apply_chosen_path(entry_setter, path: str | None) -> None:
+    if path is None:
+        return
+    entry_setter(path)
 
 
 # Body of the download thread: start, poll, and report through messages; never touches Tk
@@ -271,17 +290,31 @@ class App(tk.Tk):
         self.stop_button.config(state="normal" if running else "disabled")
         self.update_proxy_field_states()
 
-    # File picker for .torrent files
+    # File picker for .torrent files (desktop chooser on Linux, Explorer on Windows)
     def browse_torrent(self) -> None:
-        file_path = filedialog.askopenfilename(filetypes=[("Torrent files", "*.torrent"), ("All files", "*.*")])
-        if file_path:
-            self.set_entry_text(self.torrent_source_entry, file_path)
+        self.open_chooser(DialogKind.TORRENT_FILE, "Choose a torrent file", self.torrent_source_entry)
 
     # Folder picker for the save location
     def browse_save_path(self) -> None:
-        directory_path = filedialog.askdirectory()
-        if directory_path:
-            self.set_entry_text(self.save_path_entry, directory_path)
+        self.open_chooser(DialogKind.SAVE_FOLDER, "Choose where to save", self.save_path_entry)
+
+    # Open a chooser without blocking the window; Browse stays disabled until it answers
+    def open_chooser(self, kind: DialogKind, title: str, target_entry: ttk.Entry) -> None:
+        self.set_browse_buttons_state("disabled")
+
+        # Runs on the Tk thread once the user has chosen or cancelled
+        def on_result(path: str | None) -> None:
+            # A download that started meanwhile keeps the form locked
+            if not self.running:
+                self.set_browse_buttons_state("normal")
+            apply_chosen_path(lambda text: self.set_entry_text(target_entry, text), path)
+
+        choose_path(kind, title, on_result, self.after, tk_chooser)
+
+    # Enable or disable both Browse buttons together
+    def set_browse_buttons_state(self, state: str) -> None:
+        self.browse_torrent_button.config(state=state)
+        self.browse_save_path_button.config(state=state)
 
     # Proxy settings from the form; raises InputError
     def proxy_from_form(self, require_password: bool) -> ProxySettings | None:

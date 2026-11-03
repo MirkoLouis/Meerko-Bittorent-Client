@@ -73,10 +73,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Python, libtorrent and Tk
+      - name: Install Python, libtorrent, Tk and jeepney
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-libtorrent python3-tk python3-venv python3-pip file
+          sudo apt-get install -y python3-libtorrent python3-tk python3-jeepney python3-venv python3-pip file
 
       - name: Stamp version
         run: python3 packaging/stamp_version.py "$RELEASE_VERSION"
