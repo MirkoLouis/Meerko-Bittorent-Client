@@ -23,6 +23,8 @@
             runtimeDependencies = pythonPackages: [
                 pythonPackages.libtorrent-rasterbar
                 pythonPackages.tkinter
+                # D-Bus client for the desktop portal's native file chooser
+                pythonPackages.jeepney
             ];
 
             # The application, built from pyproject.toml; the check phase runs the pytest suite

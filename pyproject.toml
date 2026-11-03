@@ -11,8 +11,9 @@ requires-python = ">=3.10"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "Mark Leo Ocsio Bagood" }]
-# libtorrent is provided per platform (Nix, apt, or requirements.txt on Windows), not via pip metadata
-dependencies = []
+# libtorrent is provided per platform (Nix, apt, or requirements.txt on Windows), not via pip metadata.
+# jeepney (pure Python D-Bus) opens the desktop's file chooser on Linux only.
+dependencies = ["jeepney>=0.7; sys_platform == 'linux'"]
 
 [project.urls]
 Homepage = "https://github.com/MirkoLouis/Meerko-Bittorent-Client"
