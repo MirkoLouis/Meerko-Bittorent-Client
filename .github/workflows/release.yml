@@ -74,10 +74,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Python, libtorrent, Tk and jeepney
+      - name: Install Python, libtorrent, Tk, jeepney and pytest
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-libtorrent python3-tk python3-jeepney python3-venv python3-pip file
+          sudo apt-get install -y python3-libtorrent python3-tk python3-jeepney python3-pytest python3-venv python3-pip file
+
+      # Prove the engine and the strict proxy profiles (no leaks) on libtorrent 2.0.5, which the AppImage ships
+      - name: Engine and leak tests on libtorrent 2.0.5
+        run: python3 -m pytest -q -p no:cacheprovider tests/test_network.py tests/test_engine.py tests/test_privacy_leaks.py
 
       - name: Stamp version
         run: python3 packaging/stamp_version.py "$RELEASE_VERSION"

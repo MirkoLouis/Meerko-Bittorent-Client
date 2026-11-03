@@ -115,3 +115,12 @@ def test_windows_job_uses_python_3_13(release_workflow):
 def test_requirements_pin_libtorrent_with_openssl_3():
     requirements = (REPOSITORY_ROOT / "requirements.txt").read_text(encoding="utf-8").split()
     assert "libtorrent==2.0.15" in requirements
+
+
+# The AppImage job proves the engine and the privacy policy on Ubuntu 22.04's libtorrent 2.0.5
+def test_appimage_job_runs_leak_tests_on_system_libtorrent(release_workflow):
+    scripts = job_scripts(release_workflow["jobs"]["appimage"])
+    assert "python3-pytest" in scripts
+    assert "python3 -m pytest" in scripts
+    for test_file in ("tests/test_network.py", "tests/test_engine.py", "tests/test_privacy_leaks.py"):
+        assert test_file in scripts
