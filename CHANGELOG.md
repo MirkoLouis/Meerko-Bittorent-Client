@@ -16,12 +16,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the AppImage, and GPG-signed `SHA256SUMS`.
 *   Smoke tests, license-header test and a validated version-stamping script.
 *   GPL-3.0-or-later license and third-party notices for bundled components.
+*   `meerko-bittorent-cli`: a working command-line client (download, seed to 1.0, clean `Ctrl+C`, exit codes).
+*   Shared engine used by both the desktop app and the CLI; they can download different torrents at the same time.
+*   Cross-process lock: the same torrent cannot run in two Meerko processes at once.
+*   Per-user `config.ini` (`~/.config/meerko-bittorent/` or `%APPDATA%\meerko-bittorent\`), read by both commands.
+*   Desktop app: proxy fields pre-filled from `config.ini`, and a **Save as default** button (never saves the password).
+*   Proxy password from `config.ini`, `MEERKO_PROXY_PASSWORD`, or a hidden prompt; warning when a stored password is readable by others.
+*   Windows releases include a separate console `…-cli.exe`; the AppImage runs the CLI with `cli` as first argument.
+*   Release builds smoke-test the frozen CLI (`--version`) on Windows and Linux.
 
 ### Changed
 
+*   Desktop app: proxy type is a dropdown; invalid input, torrent/disk errors and lock conflicts are shown instead of
+    "finished"; closing the window stops a running download cleanly.
+*   Proxy logins now work: a username selects libtorrent's authenticated SOCKS5/HTTP proxy types.
 *   Line endings are normalized to LF via `.gitattributes`.
 *   The version now lives in `meerko_bittorent/__init__.py` (`__version__`) and is stamped from the git tag at release.
 *   `libtorrent` is pinned to 2.0.11 in `requirements.txt` (Windows builds).
+
+### Removed
+
+*   `--proxy-pass` (passwords on the command line leak into shell history and the process list).
+*   Reading `config.ini` from the current working directory; use the per-user location or `--config PATH`.
+*   `client.py`, replaced by `engine.py`.
 
 ## [0.7.0] - 2025-11-25
 

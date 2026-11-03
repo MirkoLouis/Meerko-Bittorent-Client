@@ -1,10 +1,19 @@
+# Meerko Bittorent settings, shared by the desktop app and meerko-bittorent-cli.
+# Location:  Linux   ~/.config/meerko-bittorent/config.ini
+#            Windows %APPDATA%\meerko-bittorent\config.ini
+# The app's "Save as default" button writes this file for you.
+
 [Proxy]
-# Type of proxy: socks5 or http
+# Use the proxy below (true) or connect directly (false)
+enabled = true
+# Proxy type: socks5 or http
 type = socks5
-# Proxy host or IP address
+# Proxy host name or IP address
 host = your-proxy-host
-# Proxy port
-port = your-proxy-port
-# Optional: username and password for the proxy
+# Proxy port (1-65535)
+port = 1080
+# Optional login
 # username = your-username
+# The app never writes a password here. If you add one yourself, make this file private:
+#   chmod 600 ~/.config/meerko-bittorent/config.ini
 # password = your-password

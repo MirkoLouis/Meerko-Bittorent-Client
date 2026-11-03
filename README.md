@@ -17,8 +17,9 @@ Prebuilt binaries are attached to each [GitHub Release](https://github.com/Mirko
 
 | File | Platform |
 |---|---|
-| `Meerko-Bittorent-<version>-windows-x86_64.exe` | Windows 10/11, 64-bit |
-| `Meerko-Bittorent-<version>-x86_64.AppImage` | Linux, 64-bit (glibc 2.35 or newer) |
+| `Meerko-Bittorent-<version>-windows-x86_64.exe` | Windows 10/11, 64-bit: the desktop app |
+| `Meerko-Bittorent-<version>-windows-x86_64-cli.exe` | Windows 10/11, 64-bit: the command-line client (optional) |
+| `Meerko-Bittorent-<version>-x86_64.AppImage` | Linux, 64-bit (glibc 2.35 or newer): app and command line in one file |
 | `SHA256SUMS`, `SHA256SUMS.asc` | Checksums and their GPG signature |
 
 ### Verify your download
@@ -83,51 +84,56 @@ python -m meerko_bittorent
 
 ## Usage
 
-> **Note:** the command-line interface is being reworked so the desktop app runs on top of it.
-> `python -m meerko_bittorent` currently opens the desktop app; the commands below describe the CLI.
+Meerko comes as two commands built on the same engine:
 
-To download a torrent, you can run the client from the command line, providing a path to a `.torrent` file or a magnet link, or use a prebuilt release (see [Download](#download)), the recommended way for most people.
+| Command | What it is |
+|---|---|
+| `meerko-bittorent` | The desktop app (`python -m meerko_bittorent` from source) |
+| `meerko-bittorent-cli` | The command-line client (`python -m meerko_bittorent.cli` from source) |
 
-```bash
-python -m meerko_bittorent <torrent_source> <save_path>
-```
+On Windows these are two separate `.exe` downloads. The AppImage contains both: run it normally for the app,
+or as `./Meerko-Bittorent-<version>-x86_64.AppImage cli …` for the command line. Most people should use the
+desktop app from a prebuilt release (see [Download](#download)).
 
-For a detailed reference of all commands and options, please see the [COMMANDS.md](COMMANDS.md) file.
-
-### Examples
-
-**Downloading from a `.torrent` file:**
-```bash
-python -m meerko_bittorent "path/to/your.torrent" "path/to/save/directory"
-```
-
-**Downloading from a magnet link:**
-```bash
-python -m meerko_bittorent "magnet:?xt=urn:btih:..." "path/to/save/directory"
-```
-
-### Using a Proxy
-
-The client can be configured to use a proxy for anonymity. You can do this in two ways:
-
-#### 1. Default Proxy with `config.ini`
-
-For a more permanent setup, you can use the `config.ini` file:
-
-1.  Rename `config.ini.example` to `config.ini`.
-2.  Edit `config.ini` with your proxy details.
-
-The client will automatically use these settings every time it runs.
-
-#### 2. Command-Line Arguments
-
-You can specify a proxy for a single run using command-line arguments. These will override the settings in `config.ini`.
+### Command line
 
 ```bash
-python -m meerko_bittorent "magnet:?xt=urn:btih:..." "path/to/save/directory" --proxy-type socks5 --proxy-host your-proxy-host --proxy-port your-proxy-port
+meerko-bittorent-cli "path/to/your.torrent" "path/to/save/directory"
+meerko-bittorent-cli "magnet:?xt=urn:btih:..." "path/to/save/directory"
+meerko-bittorent-cli --proxy-type socks5 --proxy-host 127.0.0.1 --proxy-port 1080 "magnet:?..." "downloads"
 ```
 
-To disable the proxy for a single run, use the `--no-proxy` flag.
+The client downloads, seeds until a 1.0 share ratio, then exits. `Ctrl+C` stops it cleanly. See
+[COMMANDS.md](COMMANDS.md) for every option, where the proxy password comes from, and the exit codes.
+
+### Running the CLI and the app together
+
+Each command runs its own engine, so you can download **different** torrents in the app and on the command line
+at the same time (they share your bandwidth). The **same** torrent is refused in a second window or terminal with
+"already being downloaded by another Meerko process", because two programs writing the same files would corrupt
+them.
+
+Meerko handles one torrent per window on purpose: its author downloads one torrent at a time, so a multi-torrent
+list is not planned. Open a second window or terminal if you need two at once.
+
+### Settings file
+
+Both commands read the same `config.ini`:
+
+*   Linux: `~/.config/meerko-bittorent/config.ini` (or `$XDG_CONFIG_HOME/meerko-bittorent/config.ini`)
+*   Windows: `%APPDATA%\meerko-bittorent\config.ini`
+
+The app's **Save as default** button writes it for you; [`config.ini.example`](config.ini.example) shows the
+format. The app never saves your proxy password. If you add one to the file yourself, make the file private
+(`chmod 600` on Linux); both commands warn you if other users can read it.
+
+### Choosing a proxy
+
+A proxy hides your IP address from peers, **not** from whoever runs the proxy: they see your real IP and every
+torrent you join. Use a SOCKS5 proxy you trust, ideally one that supports UDP (BitTorrent's DHT and uTP need it),
+such as one offered by a paid VPN provider or a server you control. Avoid free public proxy lists: their operators
+are unknown and may log or tamper with traffic, most do not support UDP, they stop working within minutes, and
+many relay through machines whose owners never agreed to it.
 
 ## Development
 
