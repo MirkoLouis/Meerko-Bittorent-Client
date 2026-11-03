@@ -8,7 +8,7 @@ import time
 import libtorrent as lt
 import pytest
 
-from meerko_bittorent.engine import Engine
+from meerko_bittorent.engine import Engine, listen_message
 from meerko_bittorent.errors import AlreadyRunningError, TorrentError
 from meerko_bittorent.torrent_lock import TorrentLock
 
@@ -143,3 +143,9 @@ def test_dotdot_path_stays_inside_save_path(tmp_path):
     save_path = tmp_path / "save"
     resolved = (save_path / torrent_info.files().file_path(0)).resolve()
     assert resolved.is_relative_to(save_path.resolve())
+
+
+# Port 0 means no listening socket (proxy mode), which deserves a clearer log line
+def test_listen_message():
+    assert listen_message(0) == "Not accepting incoming connections (proxy mode)"
+    assert listen_message(6881) == "Session listening on port 6881"

@@ -64,6 +64,13 @@ def proxy_session_settings(proxy: ProxySettings) -> dict[str, object]:
     return settings
 
 
+# Log line for the bound port; 0 means no listening socket, as with a forced proxy
+def listen_message(port: int) -> str:
+    if port == 0:
+        return "Not accepting incoming connections (proxy mode)"
+    return f"Session listening on port {port}"
+
+
 # Hex info-hash of a torrent: v1 (SHA-1) when present, else v2 (SHA-256)
 def best_info_hash(info_hashes) -> str:
     if info_hashes.has_v1():
@@ -174,7 +181,7 @@ class Engine:
 
         self.session = lt.session(settings)
         self.lock_directory = lock_directory
-        logger.info("Session listening on port %d", self.listen_port)
+        logger.info(listen_message(self.listen_port))
 
     # The port actually bound (may differ from the requested one after fallback)
     @property

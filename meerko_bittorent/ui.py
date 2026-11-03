@@ -17,7 +17,7 @@ from meerko_bittorent.config import default_config_path, insecure_password_file,
 from meerko_bittorent.driver import Outcome, drive_download
 from meerko_bittorent.engine import Engine
 from meerko_bittorent.errors import AlreadyRunningError, InputError, MeerkoError
-from meerko_bittorent.proxy import ProxyKind, ProxySettings, parse_proxy_kind
+from meerko_bittorent.proxy import ProxyKind, ProxySettings, parse_proxy_kind, validate_port_text
 from meerko_bittorent.sources import prepare_save_path, prepare_source
 from meerko_bittorent.status import DownloadStatus, format_status
 
@@ -65,15 +65,15 @@ def form_to_proxy(
     if not enabled:
         return None
 
-    port_digits = port_text.strip()
-    # Only plain digits are a port; int() would also accept "-1" or " +5"
-    if not port_digits.isdigit():
-        raise InputError(f"proxy port must be a number, got {port_text!r}")
+    # Check fields in on-screen order so the message names the first thing to fix
+    if not host.strip():
+        raise InputError("Enter the proxy host")
+    port = validate_port_text(port_text)
 
     settings = ProxySettings(
         kind=parse_proxy_kind(kind_text),
         host=host.strip(),
-        port=int(port_digits),
+        port=port,
         username=username.strip() or None,
         password=password or None,
     )
@@ -81,7 +81,7 @@ def form_to_proxy(
 
     # The window cannot prompt mid-download, so a login needs its password up front
     if require_password and settings.username and not settings.password:
-        raise InputError("enter the proxy password for this user (it is never saved by the app)")
+        raise InputError("Enter the proxy password for this user (it is never saved)")
     return settings
 
 

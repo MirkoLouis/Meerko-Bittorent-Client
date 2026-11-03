@@ -36,6 +36,28 @@ def has_invalid_host_characters(host: str) -> bool:
     return any(character.isspace() or not character.isprintable() for character in host)
 
 
+# Raise the range message unless port is a real TCP port
+def check_port_range(port: int) -> None:
+    if not MINIMUM_PORT <= port <= MAXIMUM_PORT:
+        raise InputError(f"The proxy port must be between {MINIMUM_PORT} and {MAXIMUM_PORT} (you entered {port})")
+
+
+# Turn typed port text into a port number, with one message per kind of mistake
+def validate_port_text(text: str) -> int:
+    stripped = text.strip()
+    # Nothing typed yet
+    if not stripped:
+        raise InputError(f"Enter the proxy port ({MINIMUM_PORT}–{MAXIMUM_PORT})")
+    # Only plain digits; int() would also accept "-1", "+5" or "1_000"
+    if not stripped.isdigit():
+        raise InputError(
+            f"The proxy port must be a whole number from {MINIMUM_PORT} to {MAXIMUM_PORT} (you entered {text!r})"
+        )
+    port = int(stripped)
+    check_port_range(port)
+    return port
+
+
 # One proxy endpoint plus optional login
 @dataclass(frozen=True)
 class ProxySettings:
@@ -49,13 +71,12 @@ class ProxySettings:
     def validate(self) -> None:
         # Host must be present and plausible
         if not self.host:
-            raise InputError("proxy host is empty")
+            raise InputError("Enter the proxy host")
         if has_invalid_host_characters(self.host):
             raise InputError(f"proxy host {self.host!r} contains spaces or control characters")
 
         # Port must be a real TCP port
-        if not MINIMUM_PORT <= self.port <= MAXIMUM_PORT:
-            raise InputError(f"proxy port {self.port} is outside {MINIMUM_PORT}-{MAXIMUM_PORT}")
+        check_port_range(self.port)
 
         # A password only makes sense together with a username
         if self.password and not self.username:

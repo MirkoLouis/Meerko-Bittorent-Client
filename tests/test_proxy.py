@@ -4,7 +4,7 @@
 import pytest
 
 from meerko_bittorent.errors import InputError
-from meerko_bittorent.proxy import ProxyKind, ProxySettings, merge_proxy, parse_proxy_kind
+from meerko_bittorent.proxy import ProxyKind, ProxySettings, merge_proxy, parse_proxy_kind, validate_port_text
 
 
 @pytest.mark.parametrize(
@@ -64,3 +64,37 @@ def test_merge_without_base_requires_kind_host_port():
         merge_proxy(None, ProxyKind.SOCKS5, "h", None, None)
     assert merge_proxy(None, None, None, None, None) is None
     assert merge_proxy(None, ProxyKind.HTTP, "h", 8080, None) == ProxySettings(ProxyKind.HTTP, "h", 8080)
+
+
+EMPTY_PORT_MESSAGE = "Enter the proxy port (1–65535)"
+
+
+# Each kind of bad port text gets its own message
+@pytest.mark.parametrize(
+    ("port_text", "expected"),
+    [
+        ("", EMPTY_PORT_MESSAGE),
+        ("abc", "The proxy port must be a whole number from 1 to 65535 (you entered 'abc')"),
+        ("-1", "The proxy port must be a whole number from 1 to 65535 (you entered '-1')"),
+        ("0", "The proxy port must be between 1 and 65535 (you entered 0)"),
+        ("70000", "The proxy port must be between 1 and 65535 (you entered 70000)"),
+    ],
+)
+def test_validate_port_text_messages(port_text, expected):
+    with pytest.raises(InputError) as raised:
+        validate_port_text(port_text)
+    assert str(raised.value) == expected
+
+
+# Surrounding spaces are forgiven; spaces inside the number are not
+def test_port_text_whitespace():
+    assert validate_port_text(" 1080 ") == 1080
+    with pytest.raises(InputError, match="whole number"):
+        validate_port_text("10 80")
+
+
+# Ports from config.ini or the CLI get the same range wording as the form
+def test_settings_out_of_range_uses_range_message():
+    with pytest.raises(InputError) as raised:
+        ProxySettings(ProxyKind.SOCKS5, "h", 70000).validate()
+    assert str(raised.value) == "The proxy port must be between 1 and 65535 (you entered 70000)"

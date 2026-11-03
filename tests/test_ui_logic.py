@@ -130,3 +130,20 @@ def test_proxy_fields_unlock_while_worker_thread_finishes():
     ui.App.update_proxy_field_states(window)
     assert window.proxy_host_entry.state == "normal"
     assert window.proxy_type_combobox.state == "readonly"
+
+
+# Fields are checked in on-screen order, each with its own message (including the reported "host only" case)
+@pytest.mark.parametrize(
+    ("host", "port_text", "username", "password", "require_password", "expected"),
+    [
+        ("", "", "", "", True, "Enter the proxy host"),
+        ("123", "", "", "", False, "Enter the proxy port (1–65535)"),
+        ("h", "abc", "", "", True, "The proxy port must be a whole number from 1 to 65535 (you entered 'abc')"),
+        ("h", "70000", "", "", True, "The proxy port must be between 1 and 65535 (you entered 70000)"),
+        ("h", "1080", "me", "", True, "Enter the proxy password for this user (it is never saved)"),
+    ],
+)
+def test_form_messages_in_screen_order(host, port_text, username, password, require_password, expected):
+    with pytest.raises(InputError) as raised:
+        ui.form_to_proxy(True, "socks5", host, port_text, username, password, require_password=require_password)
+    assert str(raised.value) == expected
