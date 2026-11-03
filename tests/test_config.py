@@ -138,3 +138,35 @@ def test_insecure_password_file(tmp_path):
     without_password.chmod(0o644)
     assert insecure_password_file(without_password) is False
     assert insecure_password_file(tmp_path / "absent.ini") is False
+
+
+# Whatever Save as default writes, the app must be able to read back (review I1)
+@pytest.mark.parametrize(
+    ("enabled", "settings"),
+    [
+        (False, None),
+        (True, None),
+        (False, ProxySettings(ProxyKind.SOCKS5, "h", 1080)),
+        (True, ProxySettings(ProxyKind.HTTP, "h", 8080, "me")),
+    ],
+)
+def test_save_then_load_round_trips(tmp_path, enabled, settings):
+    path = tmp_path / "config.ini"
+    save_proxy_defaults(path, enabled, settings)
+    loaded = load_config(path)
+    assert loaded.settings == settings
+    assert loaded.enabled == (enabled and settings is not None)
+
+
+# A disabled proxy section without an endpoint means "no proxy", not an error
+def test_load_disabled_without_endpoint(tmp_path):
+    path = write_config(tmp_path, "[Proxy]\nenabled = false\n")
+    assert load_config(path) == ProxyConfig(False, None)
+
+
+# A hand-written password belongs to its username; changing or clearing the user drops it
+@pytest.mark.parametrize("new_username", [None, "bob"])
+def test_save_drops_password_when_username_changes(tmp_path, new_username):
+    path = write_config(tmp_path, "[Proxy]\ntype = socks5\nhost = h\nport = 1\nusername = alice\npassword = keep\n")
+    save_proxy_defaults(path, True, ProxySettings(ProxyKind.SOCKS5, "h", 1, new_username))
+    assert load_config(path).settings.password is None

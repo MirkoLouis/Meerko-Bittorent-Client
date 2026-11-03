@@ -95,3 +95,38 @@ def test_worker_stops_during_metadata_wait():
 def test_ui_does_not_import_libtorrent():
     assert "lt" not in vars(ui)
     assert "libtorrent" not in vars(ui)
+
+
+# Records the state a widget was configured with
+class FakeWidget:
+    def __init__(self) -> None:
+        self.state = None
+
+    # Mirror tkinter's widget.config(state=...)
+    def config(self, state):
+        self.state = state
+
+
+# Proxy fields unlock as soon as the download has ended, even while the worker thread is still unwinding (review M1)
+def test_proxy_fields_unlock_while_worker_thread_finishes():
+    class AliveThread:
+        # The worker thread is still closing the session
+        def is_alive(self):
+            return True
+
+    class EnabledVariable:
+        # The "Enable Proxy" box is ticked
+        def get(self):
+            return True
+
+    window = type("FakeWindow", (), {})()
+    window.running = False
+    window.worker = AliveThread()
+    window.proxy_enabled = EnabledVariable()
+    window.proxy_host_entry, window.proxy_port_entry = FakeWidget(), FakeWidget()
+    window.proxy_user_entry, window.proxy_pass_entry = FakeWidget(), FakeWidget()
+    window.proxy_type_combobox = FakeWidget()
+
+    ui.App.update_proxy_field_states(window)
+    assert window.proxy_host_entry.state == "normal"
+    assert window.proxy_type_combobox.state == "readonly"

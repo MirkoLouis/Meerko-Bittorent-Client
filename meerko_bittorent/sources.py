@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Validation of user-supplied torrent sources and save folders, shared by the CLI and the GUI."""
 
+import tempfile
 from pathlib import Path
 
 from meerko_bittorent.errors import InputError
@@ -18,6 +19,13 @@ def prepare_save_path(raw_path: str) -> Path:
         save_path.mkdir(parents=True, exist_ok=True)
     except OSError as error:
         raise InputError(f"cannot create save folder {save_path}: {error.strerror}") from None
+
+    # Prove the folder is writable now, instead of failing later as a disk error (after a metadata wait)
+    try:
+        with tempfile.TemporaryFile(dir=save_path):
+            pass
+    except OSError as error:
+        raise InputError(f"cannot write to save folder {save_path}: {error.strerror}") from None
     return save_path
 
 

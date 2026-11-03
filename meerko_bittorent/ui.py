@@ -14,10 +14,11 @@ from pathlib import Path
 from tkinter import filedialog, ttk
 
 from meerko_bittorent.config import default_config_path, insecure_password_file, load_config, save_proxy_defaults
+from meerko_bittorent.driver import Outcome, drive_download
 from meerko_bittorent.engine import Engine
 from meerko_bittorent.errors import AlreadyRunningError, InputError, MeerkoError
 from meerko_bittorent.proxy import ProxyKind, ProxySettings, parse_proxy_kind
-from meerko_bittorent.sources import MAGNET_PREFIX, prepare_save_path, prepare_source
+from meerko_bittorent.sources import prepare_save_path, prepare_source
 from meerko_bittorent.status import DownloadStatus, format_status
 
 logger = logging.getLogger(__name__)
@@ -99,20 +100,11 @@ def run_download_worker(
     try:
         engine = engine_factory(proxy)
         download = engine.start(source, save_path)
-
-        # Magnets need their metadata from peers first
-        if source.startswith(MAGNET_PREFIX) and not download.wait_for_metadata(stop_event):
-            messages.put(StoppedMessage())
-            return
-
-        # Report until finished or asked to stop
-        while not stop_event.is_set():
-            messages.put(StatusMessage(download.poll()))
-            if download.finished:
-                messages.put(FinishedMessage())
-                return
-            stop_event.wait(poll_interval)
-        messages.put(StoppedMessage())
+        outcome = drive_download(
+            download, source, stop_event, lambda status: messages.put(StatusMessage(status)), poll_interval
+        )
+        # The final message tells the window how the download ended
+        messages.put(FinishedMessage() if outcome is Outcome.FINISHED else StoppedMessage())
     except AlreadyRunningError:
         messages.put(ErrorMessage(ALREADY_RUNNING_TEXT))
     except MeerkoError as error:
@@ -139,6 +131,8 @@ class App(tk.Tk):
         self.messages: queue.Queue = queue.Queue()
         self.stop_event: threading.Event | None = None
         self.worker: threading.Thread | None = None
+        # True from Start until the worker's final message; the thread may outlive this while it closes the session
+        self.running = False
 
         main_frame = ttk.Frame(self, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -253,8 +247,7 @@ class App(tk.Tk):
 
     # Proxy fields are editable only when the proxy is enabled and nothing is running
     def update_proxy_field_states(self) -> None:
-        running = self.worker is not None and self.worker.is_alive()
-        entry_state = "normal" if self.proxy_enabled.get() and not running else "disabled"
+        entry_state = "normal" if self.proxy_enabled.get() and not self.running else "disabled"
         # Every plain entry follows the same state
         for entry in (self.proxy_host_entry, self.proxy_port_entry, self.proxy_user_entry, self.proxy_pass_entry):
             entry.config(state=entry_state)
@@ -262,6 +255,7 @@ class App(tk.Tk):
 
     # Lock or unlock the whole form around a running download
     def set_running(self, running: bool) -> None:
+        self.running = running
         idle_state = "disabled" if running else "normal"
         # Inputs that must not change mid-download
         for widget in (

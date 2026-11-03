@@ -18,6 +18,8 @@ from meerko_bittorent.proxy import ProxySettings, parse_proxy_kind
 APPLICATION_DIRECTORY = "meerko-bittorent"
 CONFIG_FILE_NAME = "config.ini"
 PROXY_SECTION = "Proxy"
+# Keys that describe where the proxy is; without them a disabled section means "no proxy"
+ENDPOINT_KEYS = ("type", "host", "port")
 PRIVATE_FILE_MODE = 0o600
 GROUP_AND_OTHER_PERMISSIONS = 0o077
 
@@ -94,6 +96,11 @@ def parse_proxy_section(section: configparser.SectionProxy, path: Path) -> Proxy
     except ValueError:
         raise InputError(f"{path}: 'enabled' must be true or false") from None
 
+    # A switched-off proxy with no endpoint stored is simply "no proxy" (what Save writes for an empty form)
+    has_endpoint = any(section.get(key, "").strip() for key in ENDPOINT_KEYS)
+    if not enabled and not has_endpoint:
+        return ProxyConfig(False, None)
+
     port_text = required_value(section, "port", path)
     # Ports are whole numbers; anything else is a typo in the file
     if not port_text.isdigit():
@@ -146,13 +153,15 @@ def save_proxy_defaults(path: Path, enabled: bool, settings: ProxySettings | Non
     parser = read_config_parser(path)
     existing_section = parser[PROXY_SECTION] if parser.has_section(PROXY_SECTION) else {}
     hand_written_password = existing_section.get("password")
+    existing_username = existing_section.get("username", "").strip() or None
 
     # Rebuild the section from scratch so stale keys do not linger
     if parser.has_section(PROXY_SECTION):
         parser.remove_section(PROXY_SECTION)
     parser.add_section(PROXY_SECTION)
     section = parser[PROXY_SECTION]
-    section["enabled"] = "true" if enabled else "false"
+    # A proxy cannot be on without an endpoint
+    section["enabled"] = "true" if enabled and settings is not None else "false"
 
     # Store the endpoint even when disabled, so re-enabling needs no retyping
     if settings is not None:
@@ -163,8 +172,9 @@ def save_proxy_defaults(path: Path, enabled: bool, settings: ProxySettings | Non
         if settings.username:
             section["username"] = settings.username
 
-    # Only a password the user put in the file themselves is kept
-    if hand_written_password:
+    # A hand-written password is kept only while it still belongs to the same username
+    new_username = settings.username if settings is not None else None
+    if hand_written_password and new_username is not None and new_username == existing_username:
         section["password"] = hand_written_password
 
     # Serialize with configparser itself, then write with private permissions

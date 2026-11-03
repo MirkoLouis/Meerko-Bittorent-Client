@@ -19,6 +19,7 @@ from typing import TextIO
 
 from meerko_bittorent import __version__
 from meerko_bittorent.config import default_config_path, insecure_password_file, load_config
+from meerko_bittorent.driver import Outcome, drive_download
 from meerko_bittorent.engine import Engine, libtorrent_version
 from meerko_bittorent.errors import AlreadyRunningError, InputError, MeerkoError, TorrentError
 from meerko_bittorent.proxy import ProxyKind, ProxySettings, merge_proxy
@@ -91,8 +92,11 @@ def resolve_password(
 
 # Config proxy (if enabled) overridden field by field by the flags; --no-proxy wins
 def effective_proxy(arguments: argparse.Namespace, config_path: Path) -> ProxySettings | None:
-    proxy_config = load_config(config_path)
+    # A direct connection needs nothing from config.ini, so a broken file must not block it
+    if arguments.no_proxy:
+        return None
 
+    proxy_config = load_config(config_path)
     # Warn when a stored password is readable by other users
     if insecure_password_file(config_path):
         print(
@@ -101,12 +105,7 @@ def effective_proxy(arguments: argparse.Namespace, config_path: Path) -> ProxySe
             file=sys.stderr,
         )
 
-    # The user asked for a direct connection this run
-    if arguments.no_proxy:
-        return None
-
     base = proxy_config.settings if proxy_config.enabled else None
-    config_password = base.password if base is not None else None
     # The password is resolved separately so its source order is always the same
     base_without_password = replace(base, password=None) if base is not None else None
     kind = ProxyKind(arguments.proxy_type) if arguments.proxy_type else None
@@ -117,6 +116,9 @@ def effective_proxy(arguments: argparse.Namespace, config_path: Path) -> ProxySe
         return None
 
     merged.validate()
+    # The stored password belongs to the stored proxy and user only; never send it anywhere else
+    same_proxy_and_user = base_without_password is not None and merged == base_without_password
+    config_password = base.password if same_proxy_and_user else None
     with_password = resolve_password(merged, config_password, os.environ, sys.stdin.isatty(), getpass.getpass)
     with_password.validate()
     return with_password
@@ -129,6 +131,7 @@ class ProgressReporter:
         self.is_terminal = is_terminal
         self.quiet = quiet
         self.last_report_time: float | None = None
+        self.line_open = False
 
     # Show one status snapshot, respecting quiet mode and the piped rate limit
     def report(self, status: DownloadStatus) -> None:
@@ -139,6 +142,7 @@ class ProgressReporter:
         if self.is_terminal:
             self.stream.write(f"\r{line:<100}")
             self.stream.flush()
+            self.line_open = True
             return
         now = time.monotonic()
         # Piped: keep logs readable with one line per interval
@@ -148,8 +152,9 @@ class ProgressReporter:
 
     # End the in-place line so later messages start on a fresh line
     def finish(self) -> None:
-        if self.is_terminal and not self.quiet:
+        if self.line_open:
             self.stream.write("\n")
+            self.line_open = False
 
 
 # Download, seed to ratio 1.0, and return the exit code; always closes the download
@@ -164,29 +169,26 @@ def run_download(
     save_path = prepare_save_path(arguments.save_path)
 
     engine = engine_factory(proxy)
-    download = engine.start(source, save_path)
     reporter = ProgressReporter(sys.stderr, sys.stderr.isatty(), arguments.quiet)
     try:
-        # Magnets need their metadata from peers before anything can be downloaded
-        if source.startswith(MAGNET_PREFIX):
-            logging.info("Fetching metadata...")
-            if not download.wait_for_metadata(stop_event):
-                return EXIT_INTERRUPTED
-
-        # Report once a second until finished or asked to stop
-        while not stop_event.is_set():
-            reporter.report(download.poll())
-            if download.finished:
-                reporter.finish()
-                logging.info("Finished: ratio 1.0 reached")
-                return EXIT_FINISHED
-            stop_event.wait(POLL_INTERVAL_SECONDS)
-
-        reporter.finish()
-        return EXIT_INTERRUPTED
+        download = engine.start(source, save_path)
+        try:
+            # Magnets first wait for their metadata inside the shared driver
+            if source.startswith(MAGNET_PREFIX):
+                logging.info("Fetching metadata...")
+            outcome = drive_download(download, source, stop_event, reporter.report, POLL_INTERVAL_SECONDS)
+        finally:
+            download.close()
     finally:
-        download.close()
+        # End the progress line before any message, then quiet the session
+        reporter.finish()
         engine.close()
+
+    # Map the driver's outcome to an exit code
+    if outcome is Outcome.FINISHED:
+        logging.info("Finished: ratio 1.0 reached")
+        return EXIT_FINISHED
+    return EXIT_INTERRUPTED
 
 
 # On POSIX, SIGTERM requests the same graceful stop as Ctrl+C; returns a function restoring the old handler

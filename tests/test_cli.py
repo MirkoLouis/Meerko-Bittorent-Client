@@ -163,3 +163,45 @@ def test_insecure_config_warns(paths, capsys):
     paths["config"].chmod(0o644)
     assert run_cli(paths, FakeEngine("finish"), str(paths["torrent"]), str(paths["save"])) == 0
     assert "chmod 600" in capsys.readouterr().err
+
+
+# --no-proxy works even when config.ini is broken (review I1)
+def test_no_proxy_ignores_broken_config(paths):
+    paths["config"].write_text("[Proxy]\nport = abc\n", encoding="utf-8")
+    assert run_cli(paths, FakeEngine("finish"), "--no-proxy", str(paths["torrent"]), str(paths["save"])) == 0
+
+
+# An existing folder the user cannot write to is refused up front (review I2)
+@pytest.mark.skipif(os.name == "nt" or os.geteuid() == 0, reason="POSIX permissions; root can write anywhere")
+def test_unwritable_save_path_exits_2(paths):
+    read_only = paths["save"]
+    read_only.mkdir()
+    read_only.chmod(0o555)
+    try:
+        assert run_cli(paths, FakeEngine("finish"), str(paths["torrent"]), str(read_only)) == 2
+    finally:
+        read_only.chmod(0o755)
+
+
+# The stored password is only sent to the exact proxy and user it was stored for (review I3)
+@pytest.mark.parametrize("override", [["--proxy-host", "other-host"], ["--proxy-user", "bob"], ["--proxy-port", "9"]])
+def test_config_password_not_sent_to_other_proxy(paths, override):
+    paths["config"].write_text(
+        "[Proxy]\ntype = socks5\nhost = a\nport = 1080\nusername = alice\npassword = secret\n", encoding="utf-8"
+    )
+    paths["config"].chmod(0o600)
+    engine = FakeEngine("finish")
+    # No env var and no terminal: refusing (exit 2) is correct, sending "secret" is not
+    assert run_cli(paths, engine, *override, str(paths["torrent"]), str(paths["save"])) == 2
+    assert engine.proxy is None
+
+
+# Unchanged proxy and user still get the stored password
+def test_config_password_used_for_its_own_proxy(paths):
+    paths["config"].write_text(
+        "[Proxy]\ntype = socks5\nhost = a\nport = 1080\nusername = alice\npassword = secret\n", encoding="utf-8"
+    )
+    paths["config"].chmod(0o600)
+    engine = FakeEngine("finish")
+    assert run_cli(paths, engine, str(paths["torrent"]), str(paths["save"])) == 0
+    assert engine.proxy.password == "secret"
