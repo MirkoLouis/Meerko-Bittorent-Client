@@ -20,6 +20,9 @@ Homepage = "https://github.com/MirkoLouis/Meerko-Bittorent-Client"
 [project.gui-scripts]
 meerko-bittorent = "meerko_bittorent.__main__:main"
 
+[project.scripts]
+meerko-bittorent-cli = "meerko_bittorent.cli:main_entry"
+
 [tool.setuptools]
 # Explicit: flat-layout auto-discovery would trip over packaging/ and tests/
 packages = ["meerko_bittorent"]

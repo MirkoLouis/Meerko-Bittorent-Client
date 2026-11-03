@@ -1,43 +1,270 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
+"""meerko-bittorent-cli: download one torrent from the command line using the shared engine.
+
+Exit codes: 0 finished, 1 torrent/disk error, 2 usage/config error, 3 already running elsewhere, 130 interrupted.
+"""
+
 import argparse
-import libtorrent as lt
-from meerko_bittorent.client import MeerkoClient
-from meerko_bittorent.config import load_proxy_settings
+import getpass
+import logging
+import os
+import signal
+import sys
+import threading
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import replace
+from pathlib import Path
+from typing import TextIO
 
-def main():
-    # Load default proxy settings from config file
-    proxy_settings = load_proxy_settings()
+from meerko_bittorent import __version__
+from meerko_bittorent.config import default_config_path, insecure_password_file, load_config
+from meerko_bittorent.engine import MAGNET_PREFIX, Engine, libtorrent_version
+from meerko_bittorent.errors import AlreadyRunningError, InputError, MeerkoError, TorrentError
+from meerko_bittorent.proxy import ProxyKind, ProxySettings, merge_proxy
+from meerko_bittorent.status import DownloadStatus, format_status
 
-    parser = argparse.ArgumentParser(description="Meerko Bittorent Client")
-    parser.add_argument("torrent_source", help="Path to the .torrent file or a magnet link")
-    parser.add_argument("save_path", help="Path to the directory to save the files")
-
-    # Proxy arguments
-    parser.add_argument("--proxy-type", help="Proxy type (e.g., socks5, http)", dest="proxy_type")
-    parser.add_argument("--proxy-host", help="Proxy host", dest="proxy_host")
-    parser.add_argument("--proxy-port", help="Proxy port", dest="proxy_port", type=int)
-    parser.add_argument("--proxy-user", help="Proxy username", dest="proxy_user")
-    parser.add_argument("--proxy-pass", help="Proxy password", dest="proxy_pass")
-    parser.add_argument("--no-proxy", help="Disable proxy even if configured", action="store_true")
+EXIT_FINISHED = 0
+EXIT_TORRENT_ERROR = 1
+EXIT_INPUT_ERROR = 2
+EXIT_ALREADY_RUNNING = 3
+EXIT_INTERRUPTED = 130
+PASSWORD_ENVIRONMENT_VARIABLE = "MEERKO_PROXY_PASSWORD"
+POLL_INTERVAL_SECONDS = 1.0
+PIPED_REPORT_INTERVAL_SECONDS = 10.0
 
 
-    args = parser.parse_args()
+# Command-line interface definition; there is deliberately no --proxy-pass (argv leaks to history and ps)
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="meerko-bittorent-cli",
+        description="Download a torrent and seed it to a 1.0 share ratio.",
+    )
+    parser.add_argument("source", help="path to a .torrent file, or a magnet link")
+    parser.add_argument("save_path", help="folder to save into (created if missing)")
+    parser.add_argument("--config", help="use this config.ini instead of the per-user one")
+    parser.add_argument("--proxy-type", choices=[kind.value for kind in ProxyKind])
+    parser.add_argument("--proxy-host")
+    parser.add_argument("--proxy-port", type=int)
+    parser.add_argument("--proxy-user")
+    parser.add_argument("--no-proxy", action="store_true", help="ignore any configured proxy for this run")
+    parser.add_argument("--quiet", action="store_true", help="no progress output; errors are still shown")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"meerko-bittorent-cli {__version__} (libtorrent {libtorrent_version()})",
+    )
+    return parser
 
-    # Override config with command-line arguments
-    if args.no_proxy:
-        proxy_settings = None
-    elif args.proxy_type and args.proxy_host and args.proxy_port:
-        proxy_settings = {
-            "type": lt.proxy_type_t.socks5 if args.proxy_type.lower() == 'socks5' else lt.proxy_type_t.http,
-            "host": args.proxy_host,
-            "port": args.proxy_port,
-        }
-        if args.proxy_user and args.proxy_pass:
-            proxy_settings["username"] = args.proxy_user
-            proxy_settings["password"] = args.proxy_pass
 
-    client = MeerkoClient(proxy_settings=proxy_settings)
-    client.download(args.torrent_source, args.save_path)
+# Fill in a missing proxy password from config, then the environment, then an interactive prompt
+def resolve_password(
+    settings: ProxySettings,
+    config_password: str | None,
+    environ: Mapping[str, str],
+    stdin_is_tty: bool,
+    prompt: Callable[[str], str],
+) -> ProxySettings:
+    # Without a username no password is needed; an explicit password is kept
+    if not settings.username or settings.password:
+        return settings
+
+    # 1. The password the user put in config.ini
+    if config_password:
+        return replace(settings, password=config_password)
+
+    # 2. The environment, for scripts
+    environment_password = environ.get(PASSWORD_ENVIRONMENT_VARIABLE)
+    if environment_password:
+        return replace(settings, password=environment_password)
+
+    # 3. Ask, but only when someone is at a terminal
+    if stdin_is_tty:
+        return replace(settings, password=prompt(f"Password for proxy user {settings.username}: "))
+
+    raise InputError(
+        f"proxy user {settings.username!r} needs a password: put it in config.ini, "
+        f"set {PASSWORD_ENVIRONMENT_VARIABLE}, or run from a terminal to be prompted"
+    )
+
+
+# Config proxy (if enabled) overridden field by field by the flags; --no-proxy wins
+def effective_proxy(arguments: argparse.Namespace, config_path: Path) -> ProxySettings | None:
+    proxy_config = load_config(config_path)
+
+    # Warn when a stored password is readable by other users
+    if insecure_password_file(config_path):
+        print(
+            f"warning: {config_path} contains a proxy password and other users can read it; "
+            f"run: chmod 600 '{config_path}'",
+            file=sys.stderr,
+        )
+
+    # The user asked for a direct connection this run
+    if arguments.no_proxy:
+        return None
+
+    base = proxy_config.settings if proxy_config.enabled else None
+    config_password = base.password if base is not None else None
+    # The password is resolved separately so its source order is always the same
+    base_without_password = replace(base, password=None) if base is not None else None
+    kind = ProxyKind(arguments.proxy_type) if arguments.proxy_type else None
+    merged = merge_proxy(base_without_password, kind, arguments.proxy_host, arguments.proxy_port, arguments.proxy_user)
+
+    # No proxy configured and none given on the command line
+    if merged is None:
+        return None
+
+    merged.validate()
+    with_password = resolve_password(merged, config_password, os.environ, sys.stdin.isatty(), getpass.getpass)
+    with_password.validate()
+    return with_password
+
+
+# Absolute save folder; it must be a folder or not exist yet (it is then created)
+def prepare_save_path(raw_path: str) -> Path:
+    save_path = Path(raw_path).expanduser().resolve()
+    # An existing file where a folder should be is a usage error
+    if save_path.exists() and not save_path.is_dir():
+        raise InputError(f"save path {save_path} exists and is not a folder")
+    try:
+        save_path.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise InputError(f"cannot create save folder {save_path}: {error.strerror}") from None
+    return save_path
+
+
+# Magnet links pass through; .torrent paths become absolute and must be existing files
+def prepare_source(raw_source: str) -> str:
+    if raw_source.startswith(MAGNET_PREFIX):
+        return raw_source
+    torrent_path = Path(raw_source).expanduser().resolve()
+    # Catch typos before libtorrent does, with a clearer message
+    if not torrent_path.is_file():
+        raise InputError(f"torrent file not found: {torrent_path}")
+    return str(torrent_path)
+
+
+# Progress on stderr: one in-place line on a terminal, a plain line every 10 s when piped
+class ProgressReporter:
+    def __init__(self, stream: TextIO, is_terminal: bool, quiet: bool) -> None:
+        self.stream = stream
+        self.is_terminal = is_terminal
+        self.quiet = quiet
+        self.last_report_time: float | None = None
+
+    # Show one status snapshot, respecting quiet mode and the piped rate limit
+    def report(self, status: DownloadStatus) -> None:
+        if self.quiet:
+            return
+        line = format_status(status)
+        # Terminal: overwrite the same line (padding clears leftovers from a longer previous line)
+        if self.is_terminal:
+            self.stream.write(f"\r{line:<100}")
+            self.stream.flush()
+            return
+        now = time.monotonic()
+        # Piped: keep logs readable with one line per interval
+        if self.last_report_time is None or now - self.last_report_time >= PIPED_REPORT_INTERVAL_SECONDS:
+            self.stream.write(line + "\n")
+            self.last_report_time = now
+
+    # End the in-place line so later messages start on a fresh line
+    def finish(self) -> None:
+        if self.is_terminal and not self.quiet:
+            self.stream.write("\n")
+
+
+# Download, seed to ratio 1.0, and return the exit code; always closes the download
+def run_download(
+    arguments: argparse.Namespace,
+    engine_factory: Callable[[ProxySettings | None], Engine],
+    stop_event: threading.Event,
+) -> int:
+    config_path = Path(arguments.config).expanduser().resolve() if arguments.config else default_config_path()
+    proxy = effective_proxy(arguments, config_path)
+    source = prepare_source(arguments.source)
+    save_path = prepare_save_path(arguments.save_path)
+
+    engine = engine_factory(proxy)
+    download = engine.start(source, save_path)
+    reporter = ProgressReporter(sys.stderr, sys.stderr.isatty(), arguments.quiet)
+    try:
+        # Magnets need their metadata from peers before anything can be downloaded
+        if source.startswith(MAGNET_PREFIX):
+            logging.info("Fetching metadata...")
+            if not download.wait_for_metadata(stop_event):
+                return EXIT_INTERRUPTED
+
+        # Report once a second until finished or asked to stop
+        while not stop_event.is_set():
+            reporter.report(download.poll())
+            if download.finished:
+                reporter.finish()
+                logging.info("Finished: ratio 1.0 reached")
+                return EXIT_FINISHED
+            stop_event.wait(POLL_INTERVAL_SECONDS)
+
+        reporter.finish()
+        return EXIT_INTERRUPTED
+    finally:
+        download.close()
+        engine.close()
+
+
+# On POSIX, SIGTERM requests the same graceful stop as Ctrl+C; returns a function restoring the old handler
+def install_termination_handler(stop_event: threading.Event) -> Callable[[], None]:
+    # Signal handlers can only be installed from the main thread, and Windows has no SIGTERM delivery
+    if os.name == "nt" or threading.current_thread() is not threading.main_thread():
+        return lambda: None
+    previous_handler = signal.signal(signal.SIGTERM, lambda _signal, _frame: stop_event.set())
+    return lambda: signal.signal(signal.SIGTERM, previous_handler)
+
+
+# Program entry for tests and main_entry(); returns the exit code instead of exiting
+def main(
+    argv: list[str] | None = None,
+    engine_factory: Callable[[ProxySettings | None], Engine] = Engine,
+    stop_event: threading.Event | None = None,
+) -> int:
+    try:
+        arguments = build_parser().parse_args(argv)
+    except SystemExit as exit_request:
+        # argparse exits 2 on usage errors and 0 for --help/--version
+        return int(exit_request.code or 0)
+
+    logging.basicConfig(
+        level=logging.WARNING if arguments.quiet else logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        stream=sys.stderr,
+    )
+    stop_event = stop_event if stop_event is not None else threading.Event()
+    restore_handler = install_termination_handler(stop_event)
+    try:
+        return run_download(arguments, engine_factory, stop_event)
+    except KeyboardInterrupt:
+        return EXIT_INTERRUPTED
+    except InputError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return EXIT_INPUT_ERROR
+    except AlreadyRunningError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return EXIT_ALREADY_RUNNING
+    except TorrentError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return EXIT_TORRENT_ERROR
+    except MeerkoError as error:
+        # Any future subclass still ends cleanly
+        print(f"error: {error}", file=sys.stderr)
+        return EXIT_TORRENT_ERROR
+    finally:
+        restore_handler()
+
+
+# Console-script entry point (meerko-bittorent-cli)
+def main_entry() -> None:
+    sys.exit(main())
+
 
 if __name__ == "__main__":
-    main()
+    main_entry()
