@@ -1,38 +1,176 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
+"""The per-user config.ini shared by the CLI and the GUI.
+
+Location: $XDG_CONFIG_HOME/meerko-bittorent/config.ini (default ~/.config/...) on Linux,
+%APPDATA%\\meerko-bittorent\\config.ini on Windows. The app never writes a proxy password to it.
+"""
+
 import configparser
+import io
 import os
-import libtorrent as lt
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
 
-def load_proxy_settings():
-    config_path = 'config.ini'
-    if not os.path.exists(config_path):
-        return None
+from meerko_bittorent.errors import InputError
+from meerko_bittorent.proxy import ProxySettings, parse_proxy_kind
 
-    config = configparser.ConfigParser()
-    config.read(config_path)
+APPLICATION_DIRECTORY = "meerko-bittorent"
+CONFIG_FILE_NAME = "config.ini"
+PROXY_SECTION = "Proxy"
+PRIVATE_FILE_MODE = 0o600
+GROUP_AND_OTHER_PERMISSIONS = 0o077
 
-    proxy_settings = None
-    if 'Proxy' in config:
-        proxy_config = config['Proxy']
-        
-        # Check for required proxy settings
-        if not all(k in proxy_config for k in ['type', 'host', 'port']):
-            return None
 
-        proxy_type_str = proxy_config.get('type', 'socks5').lower()
-        proxy_type = lt.proxy_type_t.socks5
-        if proxy_type_str == 'http':
-            proxy_type = lt.proxy_type_t.http
-        elif proxy_type_str == 'socks5_pw':
-             proxy_type = lt.proxy_type_t.socks5_pw
+# Whether the proxy is switched on, and which proxy
+@dataclass(frozen=True)
+class ProxyConfig:
+    enabled: bool
+    settings: ProxySettings | None
 
-        proxy_settings = {
-            "type": proxy_type,
-            "host": proxy_config.get('host'),
-            "port": proxy_config.getint('port'),
-        }
-        if 'username' in proxy_config and 'password' in proxy_config:
-            proxy_settings["username"] = proxy_config.get('username')
-            proxy_settings["password"] = proxy_config.get('password')
-    
-    return proxy_settings
+
+# Absolute path of the per-user config file; arguments exist so tests can simulate other platforms
+def default_config_path(is_windows: bool | None = None, environ: Mapping[str, str] | None = None) -> Path:
+    environment = os.environ if environ is None else environ
+    running_on_windows = os.name == "nt" if is_windows is None else is_windows
+
+    # Windows keeps per-user application settings under %APPDATA%
+    if running_on_windows:
+        return Path(environment["APPDATA"]) / APPLICATION_DIRECTORY / CONFIG_FILE_NAME
+
+    # The XDG spec says to ignore a relative XDG_CONFIG_HOME
+    xdg_config_home = environment.get("XDG_CONFIG_HOME", "")
+    if xdg_config_home and Path(xdg_config_home).is_absolute():
+        return Path(xdg_config_home) / APPLICATION_DIRECTORY / CONFIG_FILE_NAME
+
+    return Path(environment["HOME"]) / ".config" / APPLICATION_DIRECTORY / CONFIG_FILE_NAME
+
+
+# Parse the file strictly (duplicate sections/keys are errors); every failure names the file
+def read_config_parser(path: Path) -> configparser.ConfigParser:
+    parser = configparser.ConfigParser(strict=True, interpolation=None)
+
+    # A missing file is an empty configuration
+    if not path.exists():
+        return parser
+
+    try:
+        text = path.read_bytes().decode("utf-8")
+        parser.read_string(text, source=str(path))
+    except UnicodeDecodeError:
+        raise InputError(f"{path}: the config file is not valid UTF-8 text") from None
+    except configparser.Error as error:
+        raise InputError(f"{path}: {error}") from None
+    except OSError as error:
+        raise InputError(f"{path}: cannot read the config file ({error.strerror})") from None
+    return parser
+
+
+# Read a required key from the [Proxy] section
+def required_value(section: configparser.SectionProxy, key: str, path: Path) -> str:
+    value = section.get(key, "").strip()
+    # Missing and empty are the same problem for the user
+    if not value:
+        raise InputError(f"{path}: [{PROXY_SECTION}] is missing '{key}'")
+    return value
+
+
+# Convert the [Proxy] section into validated settings
+def parse_proxy_section(section: configparser.SectionProxy, path: Path) -> ProxyConfig:
+    try:
+        enabled = section.getboolean("enabled", fallback=True)
+    except ValueError:
+        raise InputError(f"{path}: 'enabled' must be true or false") from None
+
+    port_text = required_value(section, "port", path)
+    # Ports are whole numbers; anything else is a typo in the file
+    if not port_text.isdigit():
+        raise InputError(f"{path}: 'port' must be a number, got {port_text!r}")
+
+    try:
+        settings = ProxySettings(
+            kind=parse_proxy_kind(required_value(section, "type", path)),
+            host=required_value(section, "host", path),
+            port=int(port_text),
+            username=section.get("username", "").strip() or None,
+            password=section.get("password", "") or None,
+        )
+        settings.validate()
+    except InputError as error:
+        # Prefix the file so the user knows where to fix it
+        if str(path) in str(error):
+            raise
+        raise InputError(f"{path}: {error}") from None
+    return ProxyConfig(enabled, settings)
+
+
+# Load the proxy configuration; a missing file or section means no proxy
+def load_config(path: Path) -> ProxyConfig:
+    parser = read_config_parser(path)
+    # No [Proxy] section: nothing configured
+    if not parser.has_section(PROXY_SECTION):
+        return ProxyConfig(False, None)
+    return parse_proxy_section(parser[PROXY_SECTION], path)
+
+
+# Write text to path, creating the file private to the user on POSIX
+def write_private_file(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Windows has no POSIX modes; the per-user profile directory is already private
+    if os.name == "nt":
+        path.write_text(text, encoding="utf-8")
+        return
+
+    file_descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, PRIVATE_FILE_MODE)
+    with os.fdopen(file_descriptor, "w", encoding="utf-8") as config_file:
+        config_file.write(text)
+    # O_CREAT's mode does not apply to an existing file, so tighten it explicitly
+    os.chmod(path, PRIVATE_FILE_MODE)
+
+
+# Save the proxy as the default for both front-ends; never writes the password, keeps a hand-written one
+def save_proxy_defaults(path: Path, enabled: bool, settings: ProxySettings | None) -> None:
+    parser = read_config_parser(path)
+    existing_section = parser[PROXY_SECTION] if parser.has_section(PROXY_SECTION) else {}
+    hand_written_password = existing_section.get("password")
+
+    # Rebuild the section from scratch so stale keys do not linger
+    if parser.has_section(PROXY_SECTION):
+        parser.remove_section(PROXY_SECTION)
+    parser.add_section(PROXY_SECTION)
+    section = parser[PROXY_SECTION]
+    section["enabled"] = "true" if enabled else "false"
+
+    # Store the endpoint even when disabled, so re-enabling needs no retyping
+    if settings is not None:
+        section["type"] = settings.kind.value
+        section["host"] = settings.host
+        section["port"] = str(settings.port)
+        # Username is optional
+        if settings.username:
+            section["username"] = settings.username
+
+    # Only a password the user put in the file themselves is kept
+    if hand_written_password:
+        section["password"] = hand_written_password
+
+    # Serialize with configparser itself, then write with private permissions
+    serialized = io.StringIO()
+    parser.write(serialized)
+    write_private_file(path, serialized.getvalue())
+
+
+# True when the file holds a password and other users can read it (always False on Windows)
+def insecure_password_file(path: Path) -> bool:
+    # Windows ACLs are per-user by default under %APPDATA%; POSIX modes do not apply
+    if os.name == "nt" or not path.exists():
+        return False
+
+    try:
+        parser = read_config_parser(path)
+    except InputError:
+        return False
+
+    has_password = parser.has_section(PROXY_SECTION) and bool(parser[PROXY_SECTION].get("password"))
+    return has_password and bool(path.stat().st_mode & GROUP_AND_OTHER_PERMISSIONS)
