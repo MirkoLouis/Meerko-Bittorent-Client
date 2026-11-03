@@ -13,6 +13,7 @@ import secrets
 import sys
 import threading
 from collections.abc import Callable
+from contextlib import ExitStack
 from enum import Enum
 from urllib.parse import unquote, urlsplit
 
@@ -22,6 +23,8 @@ PORTAL_SERVICE = "org.freedesktop.portal.Desktop"
 PORTAL_PATH = "/org/freedesktop/portal/desktop"
 FILE_CHOOSER_INTERFACE = "org.freedesktop.portal.FileChooser"
 REQUEST_INTERFACE = "org.freedesktop.portal.Request"
+PROPERTIES_INTERFACE = "org.freedesktop.DBus.Properties"
+BUS_INTERFACE = "org.freedesktop.DBus"
 FOLDER_MODE_MINIMUM_VERSION = 3
 DEFAULT_METHOD_TIMEOUT_SECONDS = 5.0
 POLL_INTERVAL_MS = 100
@@ -90,45 +93,84 @@ def portal_open_file(
         raise PortalUnavailable("no D-Bus session bus")
 
     try:
-        from jeepney import DBusAddress, MatchRule, message_bus, new_method_call
-        from jeepney.io.blocking import Proxy, open_dbus_connection
-        from jeepney.wrappers import DBusErrorResponse, unwrap_msg
+        from jeepney.io.blocking import open_dbus_connection
+        from jeepney.wrappers import DBusErrorResponse
     except ImportError as error:
         raise PortalUnavailable(f"jeepney is not installed: {error}") from None
 
     try:
         with open_dbus_connection(bus="SESSION") as connection:
-            # Folder mode only exists from FileChooser version 3
-            if kind is DialogKind.SAVE_FOLDER:
-                properties = DBusAddress(PORTAL_PATH, bus_name=PORTAL_SERVICE, interface="org.freedesktop.DBus.Properties")
-                version_call = new_method_call(properties, "Get", "ss", (FILE_CHOOSER_INTERFACE, "version"))
-                version = unwrap_msg(connection.send_and_get_reply(version_call, timeout=method_timeout))[0][1]
-                if version < FOLDER_MODE_MINIMUM_VERSION:
-                    raise PortalUnavailable(f"FileChooser version {version} has no folder mode")
-
-            # Subscribe to our Response before asking, so the answer cannot be missed
-            token = f"meerko_{secrets.token_hex(8)}"
-            response_rule = MatchRule(
-                type="signal",
-                interface=REQUEST_INTERFACE,
-                member="Response",
-                path=request_path(connection.unique_name, token),
-            )
-            Proxy(message_bus, connection, timeout=method_timeout).AddMatch(response_rule)
-
-            with connection.filter(response_rule) as responses:
-                chooser = DBusAddress(PORTAL_PATH, bus_name=PORTAL_SERVICE, interface=FILE_CHOOSER_INTERFACE)
-                open_call = new_method_call(
-                    chooser, "OpenFile", "ssa{sv}", ("", title, build_open_file_options(kind, token))
-                )
-                unwrap_msg(connection.send_and_get_reply(open_call, timeout=method_timeout))
-                # The user may take as long as they like; no timeout here
-                response = connection.recv_until_filtered(responses)
-    except (DBusErrorResponse, OSError, TimeoutError, KeyError, IndexError, TypeError) as error:
+            response = exchange_with_portal(connection, kind, title, method_timeout)
+    except (DBusErrorResponse, OSError, TimeoutError) as error:
         raise PortalUnavailable(f"desktop portal failed: {error}") from None
 
+    # The portal left the bus while its dialog was open: treat it like a cancel
+    if response is None:
+        return None
     code, results = response.body
     return response_to_path(code, results)
+
+
+# Subscribe on the bus, then keep a local filter for the rule; returns the filter's queue
+def subscribe(connection, stack: ExitStack, rule, method_timeout: float):
+    from jeepney import message_bus
+    from jeepney.io.blocking import Proxy
+
+    Proxy(message_bus, connection, timeout=method_timeout).AddMatch(rule)
+    return stack.enter_context(connection.filter(rule))
+
+
+# Match rule for the Response signal of one portal request
+def response_rule(handle: str):
+    from jeepney import MatchRule
+
+    return MatchRule(type="signal", interface=REQUEST_INTERFACE, member="Response", path=handle)
+
+
+# The OpenFile conversation; returns the Response message, or None if the portal left the bus first
+def exchange_with_portal(connection, kind: DialogKind, title: str, method_timeout: float):
+    from jeepney import DBusAddress, MatchRule, new_method_call
+    from jeepney.wrappers import unwrap_msg
+
+    # Folder mode only exists from FileChooser version 3
+    if kind is DialogKind.SAVE_FOLDER:
+        properties = DBusAddress(PORTAL_PATH, bus_name=PORTAL_SERVICE, interface=PROPERTIES_INTERFACE)
+        version_call = new_method_call(properties, "Get", "ss", (FILE_CHOOSER_INTERFACE, "version"))
+        version = unwrap_msg(connection.send_and_get_reply(version_call, timeout=method_timeout))[0][1]
+        # Too old: let the caller use the Tk folder dialog instead
+        if version < FOLDER_MODE_MINIMUM_VERSION:
+            raise PortalUnavailable(f"FileChooser version {version} has no folder mode")
+
+    with ExitStack() as stack:
+        # Notice the portal leaving the bus, so a crashed portal can never block us forever
+        owner_rule = MatchRule(type="signal", interface=BUS_INTERFACE, member="NameOwnerChanged")
+        owner_rule.add_arg_condition(0, PORTAL_SERVICE)
+        portal_gone = subscribe(connection, stack, owner_rule, method_timeout)
+
+        # Subscribe to the predicted Response path before asking, so the answer cannot be missed
+        token = f"meerko_{secrets.token_hex(8)}"
+        predicted_handle = request_path(connection.unique_name, token)
+        responses = subscribe(connection, stack, response_rule(predicted_handle), method_timeout)
+
+        chooser = DBusAddress(PORTAL_PATH, bus_name=PORTAL_SERVICE, interface=FILE_CHOOSER_INTERFACE)
+        open_call = new_method_call(chooser, "OpenFile", "ssa{sv}", ("", title, build_open_file_options(kind, token)))
+        handle = unwrap_msg(connection.send_and_get_reply(open_call, timeout=method_timeout))[0]
+
+        # Old portals ignore handle_token and answer on their own path; follow it
+        if handle != predicted_handle:
+            responses = subscribe(connection, stack, response_rule(handle), method_timeout)
+
+        return wait_for_response(connection, responses, portal_gone)
+
+
+# Process bus messages until our Response arrives or the portal leaves; no timeout (the user may take long)
+def wait_for_response(connection, responses, portal_gone):
+    while not responses:
+        connection.recv_messages()
+        # The portal service disappeared: no Response will ever come
+        if portal_gone:
+            return None
+    return responses.popleft()
 
 
 # Default background runner: a daemon thread, so an open dialog never blocks app exit

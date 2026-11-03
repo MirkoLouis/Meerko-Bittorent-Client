@@ -48,8 +48,8 @@ def validate_port_text(text: str) -> int:
     # Nothing typed yet
     if not stripped:
         raise InputError(f"Enter the proxy port ({MINIMUM_PORT}–{MAXIMUM_PORT})")
-    # Only plain digits; int() would also accept "-1", "+5" or "1_000"
-    if not stripped.isdigit():
+    # Only plain ASCII digits; int() would also accept "-1", "+5" or "1_000", and isdigit() accepts "²"
+    if not (stripped.isascii() and stripped.isdigit()):
         raise InputError(
             f"The proxy port must be a whole number from {MINIMUM_PORT} to {MAXIMUM_PORT} (you entered {text!r})"
         )

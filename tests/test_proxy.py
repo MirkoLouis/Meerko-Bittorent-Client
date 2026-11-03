@@ -98,3 +98,10 @@ def test_settings_out_of_range_uses_range_message():
     with pytest.raises(InputError) as raised:
         ProxySettings(ProxyKind.SOCKS5, "h", 70000).validate()
     assert str(raised.value) == "The proxy port must be between 1 and 65535 (you entered 70000)"
+
+
+# Unicode digits like "²" pass str.isdigit() but are not a port; they get the message, not a crash (review M1)
+@pytest.mark.parametrize("port_text", ["²", "١٠٨٠", "1080²"])
+def test_non_ascii_digits_get_whole_number_message(port_text):
+    with pytest.raises(InputError, match="whole number"):
+        validate_port_text(port_text)

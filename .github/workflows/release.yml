@@ -94,6 +94,10 @@ jobs:
       - name: Smoke-test frozen CLI
         run: dist/meerko-bittorent/meerko-bittorent-cli --version
 
+      # The native file chooser falls back silently, so prove jeepney is in the GUI's Python archive (PYZ-00)
+      - name: Check jeepney is bundled
+        run: grep -q "'jeepney.io.blocking'" build/meerko-bittorent/PYZ-00.toc
+
       - name: Pack AppImage
         run: |
           version="$(python3 -c 'import meerko_bittorent; print(meerko_bittorent.__version__)')"

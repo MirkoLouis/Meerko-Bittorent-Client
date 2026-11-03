@@ -98,3 +98,8 @@ def test_appimage_job_smoke_tests_cli(release_workflow):
 # The AppImage bundles jeepney so Linux users get the native file chooser
 def test_appimage_job_installs_jeepney(release_workflow):
     assert "python3-jeepney" in job_scripts(release_workflow["jobs"]["appimage"])
+
+
+# The AppImage must really contain jeepney; otherwise the fallback would hide its absence (review I3)
+def test_appimage_job_checks_jeepney_is_bundled(release_workflow):
+    assert "'jeepney.io.blocking'\" build/meerko-bittorent/PYZ-00.toc" in job_scripts(release_workflow["jobs"]["appimage"])
