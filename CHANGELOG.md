@@ -35,7 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 *   With a proxy the log says "Not accepting incoming connections (proxy mode)" instead of "listening on port 0".
 *   Line endings are normalized to LF via `.gitattributes`.
 *   The version now lives in `meerko_bittorent/__init__.py` (`__version__`) and is stamped from the git tag at release.
-*   `libtorrent` is pinned to 2.0.11 in `requirements.txt` (Windows builds).
+*   Windows builds use Python 3.13 and `libtorrent` 2.0.15, whose wheel has OpenSSL 3 built in. The previous
+    build needed OpenSSL 1.1 DLLs it did not ship (end-of-life, GPL-incompatible) and failed to start on clean machines.
 
 ### Removed
 

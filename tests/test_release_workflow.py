@@ -103,3 +103,15 @@ def test_appimage_job_installs_jeepney(release_workflow):
 # The AppImage must really contain jeepney; otherwise the fallback would hide its absence (review I3)
 def test_appimage_job_checks_jeepney_is_bundled(release_workflow):
     assert "'jeepney.io.blocking'\" build/meerko-bittorent/PYZ-00.toc" in job_scripts(release_workflow["jobs"]["appimage"])
+
+
+# Windows builds use Python 3.13: libtorrent's 3.13 wheel embeds OpenSSL 3 (the 3.10 one needs absent OpenSSL 1.1 DLLs)
+def test_windows_job_uses_python_3_13(release_workflow):
+    setup_python = find_step_using(release_workflow["jobs"]["windows"], "actions/setup-python")
+    assert setup_python["with"]["python-version"] == "3.13"
+
+
+# The Windows libtorrent pin must stay on a build with OpenSSL 3 built in
+def test_requirements_pin_libtorrent_with_openssl_3():
+    requirements = (REPOSITORY_ROOT / "requirements.txt").read_text(encoding="utf-8").split()
+    assert "libtorrent==2.0.15" in requirements

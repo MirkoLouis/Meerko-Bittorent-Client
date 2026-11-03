@@ -73,10 +73,10 @@ python -m meerko_bittorent
 
 ### Windows
 
-Requires Python 3.10.
+Requires Python 3.13.
 
 ```bash
-py -3.10 -m venv .venv
+py -3.13 -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 python -m meerko_bittorent
