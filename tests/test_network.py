@@ -4,8 +4,12 @@
 import pytest
 
 from meerko_bittorent.network import (
+    NO_HTTP_TRACKERS_NOTE,
+    NO_TRACKERS_SOCKS5_NOTE,
     ProxyProfile,
     keeps_tracker,
+    keeps_web_seeds,
+    no_trackers_note,
     network_settings,
     privacy_summary,
     proxy_profile,
@@ -95,3 +99,24 @@ def test_keeps_tracker():
         assert keeps_tracker(url, ProxyProfile.DIRECT) is True
     for url in ("http://t.example/announce", "https://t.example/announce", "wss://t.example/announce"):
         assert keeps_tracker(url, ProxyProfile.HTTP) is True
+
+
+# No DHT bootstrap host in proxy modes: its name would be looked up with the local DNS resolver (review I1)
+def test_proxy_profiles_have_no_dht_bootstrap_host():
+    assert network_settings(SOCKS5)["dht_bootstrap_nodes"] == ""
+    assert network_settings(HTTP)["dht_bootstrap_nodes"] == ""
+    assert "dht_bootstrap_nodes" not in network_settings(None)
+
+
+# Only HTTP mode drops web seeds (their host names would be looked up locally) (review I2)
+def test_keeps_web_seeds():
+    assert keeps_web_seeds(ProxyProfile.HTTP) is False
+    assert keeps_web_seeds(ProxyProfile.SOCKS5) is True
+    assert keeps_web_seeds(ProxyProfile.DIRECT) is True
+
+
+# Each proxy mode explains why a torrent without trackers may find no peers; direct mode needs no note
+def test_no_trackers_notes():
+    assert no_trackers_note(ProxyProfile.HTTP) == NO_HTTP_TRACKERS_NOTE
+    assert no_trackers_note(ProxyProfile.SOCKS5) == NO_TRACKERS_SOCKS5_NOTE
+    assert no_trackers_note(ProxyProfile.DIRECT) is None

@@ -10,6 +10,9 @@ from enum import Enum
 from meerko_bittorent.proxy import ProxyKind, ProxySettings
 
 NO_HTTP_TRACKERS_NOTE = "No HTTP trackers: this torrent may find no peers through an HTTP proxy"
+NO_TRACKERS_SOCKS5_NOTE = (
+    "No trackers: this torrent may find no peers through a SOCKS5 proxy (no DHT bootstrap server is contacted)"
+)
 UDP_TRACKER_SCHEME = "udp://"
 
 # The same for every profile: throughput tuning and "prefer encrypted, allow plain"
@@ -28,6 +31,8 @@ PROXY_ROUTING_SETTINGS: dict[str, object] = {
     "proxy_peer_connections": True,
     "proxy_tracker_connections": True,
     "proxy_hostnames": True,
+    # The DHT bootstrap host would be looked up with the local DNS resolver, outside the proxy
+    "dht_bootstrap_nodes": "",
 }
 
 
@@ -102,6 +107,17 @@ def network_settings(proxy: ProxySettings | None) -> dict[str, object]:
 # The one line shown to the user for the active mode
 def privacy_summary(proxy: ProxySettings | None) -> str:
     return PRIVACY_SUMMARIES[proxy_profile(proxy)]
+
+
+# Whether web seeds may be used: through an HTTP proxy their host names would be looked up locally
+def keeps_web_seeds(profile: ProxyProfile) -> bool:
+    return profile is not ProxyProfile.HTTP
+
+
+# Note for a torrent left without trackers in a proxy mode; None when no note is needed
+def no_trackers_note(profile: ProxyProfile) -> str | None:
+    notes = {ProxyProfile.HTTP: NO_HTTP_TRACKERS_NOTE, ProxyProfile.SOCKS5: NO_TRACKERS_SOCKS5_NOTE}
+    return notes.get(profile)
 
 
 # Whether a tracker may be used: HTTP mode drops UDP trackers (they cannot go through the proxy)

@@ -70,3 +70,40 @@ class UdpSentinel(Sentinel):
     def receive_once(self) -> None:
         self.socket.recvfrom(65536)
         self.record()
+
+
+SOCKS5_VERSION = 5
+SOCKS5_UDP_ASSOCIATE = 3
+SOCKS5_REPLY_COMMAND_NOT_SUPPORTED = b"\x05\x07\x00\x01" + bytes(6)
+SOCKS5_REPLY_CONNECTION_REFUSED = b"\x05\x05\x00\x01" + bytes(6)
+
+
+# A live SOCKS5 proxy that completes the greeting but refuses every request, UDP ASSOCIATE included
+class Socks5NoUdpProxy(TcpSentinel):
+    def __init__(self) -> None:
+        super().__init__("SOCKS5 proxy without UDP")
+        self.commands: list[int] = []
+
+    # Handle each client on its own thread so slow clients do not block the next one
+    def receive_once(self) -> None:
+        connection, _address = self.socket.accept()
+        self.record()
+        threading.Thread(target=self.refuse_request, args=(connection,), daemon=True).start()
+
+    # Answer "no authentication", read the request, refuse it (UDP ASSOCIATE gets "command not supported")
+    def refuse_request(self, connection: socket.socket) -> None:
+        try:
+            connection.settimeout(3)
+            connection.recv(262)
+            connection.sendall(bytes([SOCKS5_VERSION, 0]))
+            request = connection.recv(262)
+            # Too short to be a SOCKS5 request: just hang up
+            if len(request) < 2:
+                return
+            self.commands.append(request[1])
+            refusal = SOCKS5_REPLY_COMMAND_NOT_SUPPORTED if request[1] == SOCKS5_UDP_ASSOCIATE else SOCKS5_REPLY_CONNECTION_REFUSED
+            connection.sendall(refusal)
+        except OSError:
+            return
+        finally:
+            connection.close()

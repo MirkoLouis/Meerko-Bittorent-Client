@@ -141,7 +141,9 @@ the command line logs it at start.
 
 | | No proxy | SOCKS5 proxy | HTTP proxy |
 |---|---|---|---|
-| Peers, trackers and name lookups | direct | through the proxy | through the proxy |
+| Peers and trackers (including their name lookups) | direct | through the proxy | through the proxy |
+| Web seeds (HTTP download mirrors listed in a torrent) | used | through the proxy | removed |
+| DHT bootstrap server (`dht.libtorrent.org`) | contacted | not contacted | not contacted |
 | Router port opening (UPnP / NAT-PMP) | on | off | off |
 | Local network discovery (announces your torrents on the LAN) | on | off | off |
 | DHT and uTP (UDP) | on | through the proxy | off (HTTP proxies cannot carry UDP) |
@@ -151,13 +153,21 @@ the command line logs it at start.
 
 With a proxy, Meerko **fails closed**: anything that cannot go through the proxy is switched off instead of being
 sent directly, and Meerko does not accept direct incoming connections. If the proxy is down, the download stalls
-rather than falling back to your real IP. Through an HTTP proxy, a torrent that only lists UDP trackers (or a magnet
-link without trackers) may find no peers; Meerko tells you when that happens.
+rather than falling back to your real IP. With a proxy, a torrent without usable trackers (UDP-only trackers through
+an HTTP proxy, or a magnet link without trackers) may find no peers; Meerko tells you when that happens.
 
-This is checked by automated **leak tests** on every build: Meerko is pointed at a dead proxy plus fake trackers,
-peers and DHT nodes on the local machine, and the tests fail if any of them is contacted directly. A control run
-without a proxy proves the fake targets would notice traffic. The tests run against both libtorrent versions
-Meerko ships with.
+This is checked by automated **leak tests**: Meerko is pointed at a dead proxy (and at a SOCKS5 proxy that refuses
+UDP) plus fake trackers, peers and DHT nodes on the local machine, and the tests fail if any of them is contacted
+directly or if a direct incoming connection is answered. A control run without a proxy proves the fake targets would
+notice traffic. They run on Linux on every build (libtorrent 2.0.12) and in the release build of the AppImage
+(libtorrent 2.0.5); the Windows build is not leak-tested.
+
+**What a proxy does not hide:**
+
+*   **From the proxy operator:** your real IP address and every torrent you join.
+*   **From your ISP:** that you connect to the proxy.
+*   **The proxy's own name:** if you enter the proxy as a host name, it is looked up with your normal DNS. Enter its
+    IP address to avoid even that lookup.
 
 "Preferred" encryption means Meerko offers encrypted connections first and still accepts peers that only speak
 plain BitTorrent. It makes traffic harder for an ISP to recognise; it does not hide who you are.

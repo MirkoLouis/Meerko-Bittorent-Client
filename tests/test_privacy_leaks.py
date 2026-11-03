@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Offline leak tests: with a proxy set, nothing may reach trackers, peers or DHT nodes directly.
 
-Every target is a loopback sentinel; the proxy is a dead endpoint that only records attempts. A positive control
-without a proxy proves the sentinels can see traffic, so "nothing received" really means "nothing sent".
+Every target is a loopback sentinel; the proxy is a dead endpoint (or a SOCKS5 proxy that refuses UDP) that only
+records attempts. A positive control without a proxy proves the sentinels can see traffic, so "nothing received"
+really means "nothing sent". Nothing in these tests leaves the machine.
 """
 
 import os
 import socket
+import struct
 import sys
 import time
 from contextlib import ExitStack
@@ -16,23 +18,29 @@ import pytest
 
 from meerko_bittorent.engine import Engine
 from meerko_bittorent.proxy import ProxyKind, ProxySettings
-from tests.sentinels import LOOPBACK, TcpSentinel, UdpSentinel
+from tests.sentinels import LOOPBACK, SOCKS5_UDP_ASSOCIATE, Socks5NoUdpProxy, TcpSentinel, UdpSentinel
 
 pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="loopback leak tests run on Linux")
 
 POSITIVE_CONTROL_SECONDS = 10.0
 LEAK_WINDOW_SECONDS = 8.0
-HANDSHAKE_WAIT_SECONDS = 5.0
+UTP_REPLY_WAIT_SECONDS = 3.0
+UTP_SYN_TYPE_AND_VERSION = 0x41  # ST_SYN (4) << 4 | version 1
+
+# Test-session settings: announce to every tracker at once, so every leak path is exercised inside the window
+STRICTER_ANNOUNCES = {"announce_to_all_tiers": True, "announce_to_all_trackers": True}
+# Direct mode would otherwise reach the real network (router ports, LAN broadcast, the public DHT bootstrap host)
+KEEP_DIRECT_MODE_OFFLINE = {"enable_upnp": False, "enable_natpmp": False, "enable_lsd": False, "dht_bootstrap_nodes": ""}
 
 
-# Start every sentinel plus the dead proxy; returns them by role
-def start_sentinels(stack: ExitStack) -> dict:
+# Start the leak targets plus the given proxy sentinel; returns them by role
+def start_sentinels(stack: ExitStack, proxy_sentinel: TcpSentinel) -> dict:
     roles = {
         "http_tracker": TcpSentinel("HTTP tracker"),
         "udp_tracker": UdpSentinel("UDP tracker"),
         "peer": TcpSentinel("peer"),
         "dht_node": UdpSentinel("DHT node"),
-        "dead_proxy": TcpSentinel("dead proxy"),
+        "proxy": proxy_sentinel,
     }
     # Each sentinel serves until the stack closes
     for sentinel in roles.values():
@@ -56,18 +64,19 @@ def write_torrent(directory, sentinels) -> str:
     return str(torrent_path)
 
 
-# Run Meerko against the sentinels with the given proxy kind (None = direct); returns (sentinels, engine, download)
-def start_scenario(stack: ExitStack, tmp_path, proxy_kind: ProxyKind | None):
-    sentinels = start_sentinels(stack)
+# Run Meerko against the sentinels (proxy_kind None = direct); returns (sentinels, engine, download)
+def start_scenario(stack: ExitStack, tmp_path, proxy_kind: ProxyKind | None, proxy_sentinel=None, listen_port=0):
+    sentinels = start_sentinels(stack, proxy_sentinel or TcpSentinel("dead proxy"))
     proxy = None
-    # Point the proxy at the dead endpoint so any proxied traffic is visible but goes nowhere
+    # Point the proxy at its sentinel so any proxied traffic is visible but goes nowhere
     if proxy_kind is not None:
-        proxy = ProxySettings(proxy_kind, LOOPBACK, sentinels["dead_proxy"].port)
-    engine = Engine(proxy, listen_interfaces=f"{LOOPBACK}:0", lock_directory=tmp_path / "locks")
+        proxy = ProxySettings(proxy_kind, LOOPBACK, sentinels["proxy"].port)
+    engine = Engine(proxy, listen_interfaces=f"{LOOPBACK}:{listen_port}", lock_directory=tmp_path / "locks")
     stack.callback(engine.close)
-    # Announce to every tracker at once (normally only the first tier until it fails): every possible leak path
-    # is exercised inside the test window, which makes these tests stricter, not looser
-    engine.session.apply_settings({"announce_to_all_tiers": True, "announce_to_all_trackers": True})
+    engine.session.apply_settings(STRICTER_ANNOUNCES)
+    # Only direct mode needs taming; proxy modes are already offline by policy and must be tested as shipped
+    if proxy_kind is None:
+        engine.session.apply_settings(KEEP_DIRECT_MODE_OFFLINE)
     download = engine.start(write_torrent(tmp_path, sentinels), tmp_path)
     stack.callback(download.close)
     # Give libtorrent a DHT node and a peer to talk to, the way it would learn them from the swarm
@@ -76,9 +85,29 @@ def start_scenario(stack: ExitStack, tmp_path, proxy_kind: ProxyKind | None):
     return sentinels, engine, download
 
 
-# Names of the leak targets (everything except the dead proxy) that were contacted
+# Names of the leak targets (everything except the proxy) that were contacted
 def contacted_targets(sentinels: dict) -> list[str]:
-    return [sentinel.name for role, sentinel in sentinels.items() if role != "dead_proxy" and sentinel.contacts]
+    return [sentinel.name for role, sentinel in sentinels.items() if role != "proxy" and sentinel.contacts]
+
+
+# A free loopback port number (TCP and UDP), so the incoming test knows where Meerko would listen
+def free_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind((LOOPBACK, 0))
+        return probe.getsockname()[1]
+
+
+# Send a uTP connection request (ST_SYN) to the port; True if anything answers
+def utp_answers(port: int) -> bool:
+    syn = struct.pack(">BBHIIIHH", UTP_SYN_TYPE_AND_VERSION, 0, 4242, 1, 0, 1 << 20, 1, 0)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+        client.settimeout(UTP_REPLY_WAIT_SECONDS)
+        client.sendto(syn, (LOOPBACK, port))
+        try:
+            client.recvfrom(1500)
+        except (socket.timeout, ConnectionRefusedError):
+            return False
+    return True
 
 
 # Without a proxy every sentinel is reached: the harness can see traffic
@@ -86,7 +115,7 @@ def test_positive_control_reaches_all_sentinels(tmp_path):
     with ExitStack() as stack:
         sentinels, _engine, _download = start_scenario(stack, tmp_path, None)
         deadline = time.monotonic() + POSITIVE_CONTROL_SECONDS
-        targets = [sentinel for role, sentinel in sentinels.items() if role != "dead_proxy"]
+        targets = [sentinel for role, sentinel in sentinels.items() if role != "proxy"]
         # Wait for each target in turn, sharing one deadline
         for sentinel in targets:
             sentinel.contacted.wait(max(0.0, deadline - time.monotonic()))
@@ -99,7 +128,17 @@ def test_socks5_dead_proxy_leaks_nothing(tmp_path):
         sentinels, _engine, _download = start_scenario(stack, tmp_path, ProxyKind.SOCKS5)
         time.sleep(LEAK_WINDOW_SECONDS)
         assert contacted_targets(sentinels) == []
-        assert sentinels["dead_proxy"].contacts >= 1
+        assert sentinels["proxy"].contacts >= 1
+
+
+# A live SOCKS5 proxy that refuses UDP: DHT, uTP and UDP trackers must fail, never go direct (review I4)
+def test_socks5_without_udp_support_leaks_nothing(tmp_path):
+    with ExitStack() as stack:
+        proxy = Socks5NoUdpProxy()
+        sentinels, _engine, _download = start_scenario(stack, tmp_path, ProxyKind.SOCKS5, proxy_sentinel=proxy)
+        time.sleep(LEAK_WINDOW_SECONDS)
+        assert contacted_targets(sentinels) == []
+        assert SOCKS5_UDP_ASSOCIATE in proxy.commands
 
 
 # HTTP strict mode: no direct contact, no UDP tracker left, no DHT
@@ -108,24 +147,24 @@ def test_http_dead_proxy_leaks_nothing(tmp_path):
         sentinels, engine, download = start_scenario(stack, tmp_path, ProxyKind.HTTP)
         time.sleep(LEAK_WINDOW_SECONDS)
         assert contacted_targets(sentinels) == []
-        assert sentinels["dead_proxy"].contacts >= 1
+        assert sentinels["proxy"].contacts >= 1
         assert not [entry["url"] for entry in download.handle.trackers() if entry["url"].startswith("udp://")]
         assert engine.session.get_settings()["enable_dht"] is False
 
 
-# With a proxy, a direct incoming BitTorrent handshake gets no answer (or there is no listener at all)
-def test_incoming_handshake_refused_with_proxy(tmp_path):
+# With a proxy there is no TCP listener and the UDP socket ignores direct uTP; the direct control shows both work
+@pytest.mark.parametrize("proxy_kind", [None, ProxyKind.SOCKS5, ProxyKind.HTTP])
+def test_incoming_connections_refused_with_proxy(tmp_path, proxy_kind):
+    port = free_loopback_port()
     with ExitStack() as stack:
-        _sentinels, engine, download = start_scenario(stack, tmp_path, ProxyKind.SOCKS5)
-        # libtorrent opens no listening socket in proxy mode: nothing to connect to directly
-        if engine.listen_port == 0:
+        _sentinels, engine, _download = start_scenario(stack, tmp_path, proxy_kind, listen_port=port)
+        time.sleep(1)
+        # Control: without a proxy Meerko listens on the port and answers uTP, so the checks below can fail
+        if proxy_kind is None:
+            assert engine.listen_port == port
+            assert utp_answers(port) is True
             return
-        handshake = b"\x13BitTorrent protocol" + bytes(8) + bytes.fromhex(download.info_hash[:40]) + os.urandom(20)
-        reply = b""
-        with socket.create_connection((LOOPBACK, engine.listen_port), timeout=HANDSHAKE_WAIT_SECONDS) as connection:
-            connection.sendall(handshake)
-            try:
-                reply = connection.recv(68)
-            except (socket.timeout, ConnectionError):
-                reply = b""
-        assert len(reply) < 68, "a direct incoming peer completed a handshake despite the proxy"
+        assert engine.listen_port == 0
+        with pytest.raises(ConnectionRefusedError):
+            socket.create_connection((LOOPBACK, port), timeout=UTP_REPLY_WAIT_SECONDS).close()
+        assert utp_answers(port) is False

@@ -12,9 +12,10 @@ import libtorrent as lt
 
 from meerko_bittorent.errors import TorrentError
 from meerko_bittorent.network import (
-    NO_HTTP_TRACKERS_NOTE,
     ProxyProfile,
     keeps_tracker,
+    keeps_web_seeds,
+    no_trackers_note,
     network_settings,
     privacy_summary,
     proxy_profile,
@@ -215,36 +216,47 @@ class Engine:
         lock.acquire()
 
         try:
-            handle, kept_trackers = self.add_with_tracker_policy(parameters)
+            handle, kept_trackers = self.add_with_profile_policy(parameters)
         except RuntimeError as error:
             lock.release()
             raise TorrentError(f"libtorrent refused the torrent: {error}") from None
 
         notes = []
-        # Through an HTTP proxy only HTTP(S) trackers can be reached
-        if self.profile is ProxyProfile.HTTP and not kept_trackers:
-            notes.append(NO_HTTP_TRACKERS_NOTE)
+        note = no_trackers_note(self.profile)
+        # In proxy modes a torrent without trackers may find no peers; say so
+        if note is not None and not kept_trackers:
+            notes.append(note)
         logger.info("Added torrent %s", info_hash)
         return Download(self.session, handle, lock, info_hash, notes)
 
-    # Add the torrent so it never announces to a tracker the profile forbids; returns (handle, kept tracker URLs)
-    def add_with_tracker_policy(self, parameters) -> tuple[object, list[str]]:
-        # Magnets: filter their trackers before adding
+    # Add the torrent so it never contacts a tracker or web seed the profile forbids; returns (handle, kept trackers)
+    def add_with_profile_policy(self, parameters) -> tuple[object, list[str]]:
+        keep_web_seeds = keeps_web_seeds(self.profile)
+
+        # Magnets: filter trackers and web seeds (ws=) before adding
         if parameters.ti is None:
             parameters.trackers = filter_trackers(list(parameters.trackers), self.profile)
+            if not keep_web_seeds:
+                parameters.url_seeds = []
             return self.session.add_torrent(parameters), list(parameters.trackers)
 
         all_trackers = [entry.url for entry in parameters.ti.trackers()]
         kept_trackers = filter_trackers(all_trackers, self.profile)
+        removed_web_seeds = [] if keep_web_seeds else [seed["url"] for seed in parameters.ti.web_seeds()]
         # Nothing to remove: add normally
-        if kept_trackers == all_trackers:
+        if kept_trackers == all_trackers and not removed_web_seeds:
             return self.session.add_torrent(parameters), kept_trackers
 
-        # .torrent trackers live in the metadata: add paused, replace the list, then start
+        # .torrent trackers and web seeds live in the metadata: add paused, remove them, then start
         parameters.flags |= lt.torrent_flags.paused
         parameters.flags &= ~lt.torrent_flags.auto_managed
         handle = self.session.add_torrent(parameters)
-        handle.replace_trackers([lt.announce_entry(url) for url in kept_trackers])
+        if kept_trackers != all_trackers:
+            handle.replace_trackers([lt.announce_entry(url) for url in kept_trackers])
+        # A web seed is either a url-seed or an http-seed; removing an absent one is a no-op
+        for url in removed_web_seeds:
+            handle.remove_url_seed(url)
+            handle.remove_http_seed(url)
         handle.resume()
         return handle, kept_trackers
 

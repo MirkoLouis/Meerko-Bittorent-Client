@@ -28,7 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 *   Privacy modes: with a proxy Meerko fails closed (no router port opening, no LAN discovery, no direct incoming
     connections, identity hidden from trackers); HTTP proxies run in a reduced mode without DHT, uTP and UDP trackers.
 *   The app shows the active privacy mode; the CLI logs it, plus notes such as "No HTTP trackers".
-*   Offline leak tests prove that nothing is contacted directly with a proxy, on libtorrent 2.0.12 and 2.0.5.
+*   Offline leak tests (Linux) check that nothing is contacted directly with a proxy and that direct incoming
+    connections are refused; CI runs them on libtorrent 2.0.12 and, in the AppImage release build, on 2.0.5.
+*   With a proxy, the DHT bootstrap server is not contacted (its name would be looked up outside the proxy); a
+    torrent without trackers gets a note that it may find no peers.
+*   HTTP proxy mode removes web seeds (their host names would be looked up outside the proxy).
 
 ### Changed
 

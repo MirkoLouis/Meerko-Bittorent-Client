@@ -152,7 +152,7 @@ def test_listen_message():
 
 
 from meerko_bittorent.engine import filter_trackers, finished_from, named_settings_to_libtorrent, ratio_from
-from meerko_bittorent.network import NO_HTTP_TRACKERS_NOTE, ProxyProfile, privacy_summary
+from meerko_bittorent.network import NO_HTTP_TRACKERS_NOTE, NO_TRACKERS_SOCKS5_NOTE, ProxyProfile, privacy_summary
 from meerko_bittorent.proxy import ProxyKind, ProxySettings
 
 DEAD_SOCKS5 = ProxySettings(ProxyKind.SOCKS5, "127.0.0.1", 9)
@@ -280,3 +280,69 @@ def test_finished_uses_payload_counters():
     assert finished_from(False, 500, 100) is False
     assert ratio_from(50, 100) == 0.5
     assert ratio_from(50, 0) == 0.0
+
+
+# Write a .torrent with one HTTP tracker and one web seed (data absent)
+def torrent_with_web_seed(directory):
+    payload = directory / "seeded.bin"
+    payload.write_bytes(os.urandom(16 * 1024))
+    file_storage = lt.file_storage()
+    lt.add_files(file_storage, str(payload))
+    creator = lt.create_torrent(file_storage)
+    creator.add_tracker("http://127.0.0.1:1/announce", 0)
+    creator.add_url_seed("http://127.0.0.1:3/seeded.bin")
+    lt.set_piece_hashes(creator, str(directory))
+    payload.unlink()
+    torrent_path = directory / "seeded.torrent"
+    torrent_path.write_bytes(lt.bencode(creator.generate()))
+    return torrent_path
+
+
+# HTTP mode: web seeds are removed while the torrent is still paused; trackers that are allowed stay (review I2)
+def test_http_profile_removes_web_seeds_from_torrent_file(tmp_path):
+    engine = engine_with(DEAD_HTTP, tmp_path)
+    try:
+        download = engine.start(str(torrent_with_web_seed(tmp_path)), tmp_path)
+        assert list(download.handle.url_seeds()) == []
+        assert [entry["url"] for entry in download.handle.trackers()] == ["http://127.0.0.1:1/announce"]
+        download.close()
+    finally:
+        engine.close()
+
+
+# Direct mode keeps web seeds
+def test_direct_profile_keeps_web_seeds(tmp_path):
+    engine = engine_with(None, tmp_path)
+    try:
+        download = engine.start(str(torrent_with_web_seed(tmp_path)), tmp_path)
+        assert list(download.handle.url_seeds()) == ["http://127.0.0.1:3/seeded.bin"]
+        download.close()
+    finally:
+        engine.close()
+
+
+# HTTP mode: magnet web seeds (ws=) are dropped before adding
+def test_http_profile_filters_magnet_web_seeds(tmp_path):
+    magnet = (
+        "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
+        "&tr=http%3A%2F%2F127.0.0.1%3A1%2Fannounce&ws=http%3A%2F%2F127.0.0.1%3A3%2Fx"
+    )
+    engine = engine_with(DEAD_HTTP, tmp_path)
+    try:
+        download = engine.start(magnet, tmp_path)
+        assert list(download.handle.url_seeds()) == []
+        download.close()
+    finally:
+        engine.close()
+
+
+# SOCKS5 mode: a torrent without trackers gets a note, because no DHT bootstrap server is contacted (decision 1)
+def test_socks5_profile_trackerless_note(tmp_path):
+    torrent_path = torrent_with_trackers(tmp_path, [])
+    engine = engine_with(DEAD_SOCKS5, tmp_path)
+    try:
+        download = engine.start(str(torrent_path), tmp_path)
+        assert download.notes == [NO_TRACKERS_SOCKS5_NOTE]
+        download.close()
+    finally:
+        engine.close()
