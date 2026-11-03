@@ -134,11 +134,39 @@ portal is available, Meerko falls back to a simpler built-in dialog. On tiling c
 the portal only starts inside a systemd graphical session; on NixOS that is `programs.hyprland.withUWSM = true;`
 (then log in with the "uwsm-managed" Hyprland session). On Windows the normal Explorer dialog is used.
 
+### Privacy modes
+
+Meerko picks one of three modes from your proxy setting. The app shows the active mode under the progress bar, and
+the command line logs it at start.
+
+| | No proxy | SOCKS5 proxy | HTTP proxy |
+|---|---|---|---|
+| Peers, trackers and name lookups | direct | through the proxy | through the proxy |
+| Router port opening (UPnP / NAT-PMP) | on | off | off |
+| Local network discovery (announces your torrents on the LAN) | on | off | off |
+| DHT and uTP (UDP) | on | through the proxy | off (HTTP proxies cannot carry UDP) |
+| `udp://` trackers | used | through the proxy | removed |
+| Client name and local IP sent to trackers | yes | hidden | hidden |
+| Protocol encryption | preferred | preferred | preferred |
+
+With a proxy, Meerko **fails closed**: anything that cannot go through the proxy is switched off instead of being
+sent directly, and Meerko does not accept direct incoming connections. If the proxy is down, the download stalls
+rather than falling back to your real IP. Through an HTTP proxy, a torrent that only lists UDP trackers (or a magnet
+link without trackers) may find no peers; Meerko tells you when that happens.
+
+This is checked by automated **leak tests** on every build: Meerko is pointed at a dead proxy plus fake trackers,
+peers and DHT nodes on the local machine, and the tests fail if any of them is contacted directly. A control run
+without a proxy proves the fake targets would notice traffic. The tests run against both libtorrent versions
+Meerko ships with.
+
+"Preferred" encryption means Meerko offers encrypted connections first and still accepts peers that only speak
+plain BitTorrent. It makes traffic harder for an ISP to recognise; it does not hide who you are.
+
 ### Choosing a proxy
 
 A proxy hides your IP address from peers, **not** from whoever runs the proxy: they see your real IP and every
-torrent you join. Use a SOCKS5 proxy you trust, ideally one that supports UDP (BitTorrent's DHT and uTP need it),
-such as one offered by a paid VPN provider or a server you control. Avoid free public proxy lists: their operators
+torrent you join. Prefer a SOCKS5 proxy you trust that supports UDP (BitTorrent's DHT and uTP need it), such as one
+offered by a paid VPN provider or a server you control; HTTP proxies work in the reduced mode above. Avoid free public proxy lists: their operators
 are unknown and may log or tamper with traffic, most do not support UDP, they stop working within minutes, and
 many relay through machines whose owners never agreed to it.
 

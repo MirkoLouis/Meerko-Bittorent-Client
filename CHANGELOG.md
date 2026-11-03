@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 *   Windows releases include a separate console `…-cli.exe`; the AppImage runs the CLI with `cli` as first argument.
 *   Release builds smoke-test the frozen CLI (`--version`) on Windows and Linux.
 *   Linux: the Browse buttons open the desktop's native file chooser via the XDG Desktop Portal (built-in dialog as fallback).
+*   Privacy modes: with a proxy Meerko fails closed (no router port opening, no LAN discovery, no direct incoming
+    connections, identity hidden from trackers); HTTP proxies run in a reduced mode without DHT, uTP and UDP trackers.
+*   The app shows the active privacy mode; the CLI logs it, plus notes such as "No HTTP trackers".
+*   Offline leak tests prove that nothing is contacted directly with a proxy, on libtorrent 2.0.12 and 2.0.5.
 
 ### Changed
 
@@ -33,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 *   Proxy logins now work: a username selects libtorrent's authenticated SOCKS5/HTTP proxy types.
 *   Proxy form errors name the actual problem (empty host, empty port, non-numeric or out-of-range port, missing password).
 *   With a proxy the log says "Not accepting incoming connections (proxy mode)" instead of "listening on port 0".
+*   Protocol encryption is preferred (encrypted first, plain still accepted).
+*   Seeding stops at a 1.0 ratio of payload uploaded; protocol overhead no longer counts.
 *   Line endings are normalized to LF via `.gitattributes`.
 *   The version now lives in `meerko_bittorent/__init__.py` (`__version__`) and is stamped from the git tag at release.
 *   Windows builds use Python 3.13 and `libtorrent` 2.0.15, whose wheel has OpenSSL 3 built in. The previous
@@ -43,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 *   `--proxy-pass` (passwords on the command line leak into shell history and the process list).
 *   Reading `config.ini` from the current working directory; use the per-user location or `--config PATH`.
 *   `client.py`, replaced by `engine.py`.
+*   Deprecated libtorrent settings: `force_proxy`, `cache_size`, `active_downloads` and `active_seeds`.
 
 ## [0.7.0] - 2025-11-25
 

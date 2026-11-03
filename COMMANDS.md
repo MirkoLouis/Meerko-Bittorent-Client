@@ -40,6 +40,19 @@ Each proxy flag overrides only its own field from `config.ini`. For example, `--
 configured host and type and changes only the port. Without a configured proxy, `--proxy-type`, `--proxy-host`
 and `--proxy-port` must all be given.
 
+## Privacy modes
+
+With a SOCKS5 or HTTP proxy every connection goes through the proxy and nothing falls back to a direct connection.
+An HTTP proxy cannot carry UDP, so in HTTP mode DHT and uTP are off and `udp://` trackers are removed. The log shows
+the active mode at start, for example:
+
+```
+INFO - HTTP proxy: all traffic through the proxy; DHT, uTP and UDP trackers are off
+WARNING - No HTTP trackers: this torrent may find no peers through an HTTP proxy
+```
+
+See "Privacy modes" in the README for the full table.
+
 ## Proxy password
 
 There is no password option, because anything on the command line ends up in your shell history and is visible
