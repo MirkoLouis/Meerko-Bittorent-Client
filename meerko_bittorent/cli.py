@@ -19,9 +19,10 @@ from typing import TextIO
 
 from meerko_bittorent import __version__
 from meerko_bittorent.config import default_config_path, insecure_password_file, load_config
-from meerko_bittorent.engine import MAGNET_PREFIX, Engine, libtorrent_version
+from meerko_bittorent.engine import Engine, libtorrent_version
 from meerko_bittorent.errors import AlreadyRunningError, InputError, MeerkoError, TorrentError
 from meerko_bittorent.proxy import ProxyKind, ProxySettings, merge_proxy
+from meerko_bittorent.sources import MAGNET_PREFIX, prepare_save_path, prepare_source
 from meerko_bittorent.status import DownloadStatus, format_status
 
 EXIT_FINISHED = 0
@@ -119,30 +120,6 @@ def effective_proxy(arguments: argparse.Namespace, config_path: Path) -> ProxySe
     with_password = resolve_password(merged, config_password, os.environ, sys.stdin.isatty(), getpass.getpass)
     with_password.validate()
     return with_password
-
-
-# Absolute save folder; it must be a folder or not exist yet (it is then created)
-def prepare_save_path(raw_path: str) -> Path:
-    save_path = Path(raw_path).expanduser().resolve()
-    # An existing file where a folder should be is a usage error
-    if save_path.exists() and not save_path.is_dir():
-        raise InputError(f"save path {save_path} exists and is not a folder")
-    try:
-        save_path.mkdir(parents=True, exist_ok=True)
-    except OSError as error:
-        raise InputError(f"cannot create save folder {save_path}: {error.strerror}") from None
-    return save_path
-
-
-# Magnet links pass through; .torrent paths become absolute and must be existing files
-def prepare_source(raw_source: str) -> str:
-    if raw_source.startswith(MAGNET_PREFIX):
-        return raw_source
-    torrent_path = Path(raw_source).expanduser().resolve()
-    # Catch typos before libtorrent does, with a clearer message
-    if not torrent_path.is_file():
-        raise InputError(f"torrent file not found: {torrent_path}")
-    return str(torrent_path)
 
 
 # Progress on stderr: one in-place line on a terminal, a plain line every 10 s when piped

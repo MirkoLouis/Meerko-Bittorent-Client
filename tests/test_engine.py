@@ -4,7 +4,6 @@
 import os
 import threading
 import time
-from pathlib import Path
 
 import libtorrent as lt
 import pytest

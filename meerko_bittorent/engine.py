@@ -12,13 +12,13 @@ import libtorrent as lt
 
 from meerko_bittorent.errors import TorrentError
 from meerko_bittorent.proxy import ProxySettings
+from meerko_bittorent.sources import MAGNET_PREFIX
 from meerko_bittorent.status import DownloadStatus
 from meerko_bittorent.torrent_lock import TorrentLock
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_LISTEN_INTERFACES = "0.0.0.0:6881"
-MAGNET_PREFIX = "magnet:"
 # torrent_status.state values in libtorrent 2.0 (index 0 and 6 are unused there)
 STATE_NAMES = (
     "queued",
