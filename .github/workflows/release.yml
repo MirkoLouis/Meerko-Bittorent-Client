@@ -44,15 +44,20 @@ jobs:
       - name: Install build dependencies
         run: python -m pip install -r requirements.txt pyinstaller
 
-      - name: Build executable
+      - name: Build executables
         run: pyinstaller --noconfirm packaging/meerko-bittorent.spec
 
-      # Name the asset with the validated, stamped version (read back from the package)
-      - name: Name release asset
+      # The frozen CLI must start and load libtorrent (catches missing DLLs before users do)
+      - name: Smoke-test frozen CLI
+        run: dist/meerko-bittorent-cli.exe --version
+
+      # Name the assets with the validated, stamped version (read back from the package)
+      - name: Name release assets
         run: |
           version="$(python -c 'import meerko_bittorent; print(meerko_bittorent.__version__)')"
           mkdir -p release
           mv dist/meerko-bittorent.exe "release/Meerko-Bittorent-${version}-windows-x86_64.exe"
+          mv dist/meerko-bittorent-cli.exe "release/Meerko-Bittorent-${version}-windows-x86_64-cli.exe"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -84,6 +89,10 @@ jobs:
 
       - name: Build onedir
         run: .venv-linux/bin/pyinstaller --noconfirm packaging/meerko-bittorent.spec
+
+      # The frozen CLI must start and load libtorrent 2.0.5 before it is packed
+      - name: Smoke-test frozen CLI
+        run: dist/meerko-bittorent/meerko-bittorent-cli --version
 
       - name: Pack AppImage
         run: |

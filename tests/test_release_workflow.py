@@ -76,3 +76,20 @@ def test_appimagetool_is_pinned_and_verified():
     assert "/releases/download/1.9.1/" in script
     assert "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0" in script
     assert "sha256sum --check" in script
+
+
+# Collect every `run:` script of a job as one text block
+def job_scripts(job):
+    return "\n".join(step.get("run", "") for step in job["steps"])
+
+
+# Windows releases ship the console CLI next to the GUI, and the frozen CLI must start and load libtorrent
+def test_windows_job_ships_cli_exe_and_smoke_tests_it(release_workflow):
+    scripts = job_scripts(release_workflow["jobs"]["windows"])
+    assert "dist/meerko-bittorent-cli.exe --version" in scripts
+    assert "-windows-x86_64-cli.exe" in scripts
+
+
+# The Linux frozen CLI is smoke-tested before it is packed into the AppImage
+def test_appimage_job_smoke_tests_cli(release_workflow):
+    assert "dist/meerko-bittorent/meerko-bittorent-cli --version" in job_scripts(release_workflow["jobs"]["appimage"])
