@@ -105,3 +105,11 @@ def test_settings_out_of_range_uses_range_message():
 def test_non_ascii_digits_get_whole_number_message(port_text):
     with pytest.raises(InputError, match="whole number"):
         validate_port_text(port_text)
+
+
+# The password never appears when settings are printed or logged (Review Focus 5)
+def test_repr_hides_password():
+    settings = ProxySettings(ProxyKind.SOCKS5, "h", 1080, "me", "secret")
+    assert "secret" not in repr(settings)
+    assert "secret" not in f"{settings}"
+    assert settings.password == "secret"

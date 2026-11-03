@@ -4,7 +4,7 @@
 This module never imports libtorrent: to_libtorrent() names the proxy type, and the engine converts it.
 """
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from meerko_bittorent.errors import InputError
@@ -65,7 +65,8 @@ class ProxySettings:
     host: str
     port: int
     username: str | None = None
-    password: str | None = None
+    # Never part of repr(), so the password cannot end up in logs or tracebacks
+    password: str | None = field(default=None, repr=False)
 
     # Raise InputError describing the first problem found
     def validate(self) -> None:
