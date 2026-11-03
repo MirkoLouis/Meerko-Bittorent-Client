@@ -63,7 +63,7 @@ python -m meerko_bittorent
 ### Ubuntu / Debian
 
 ```bash
-sudo apt install python3-libtorrent python3-tk python3-venv
+sudo apt install python3-libtorrent python3-tk python3-jeepney python3-venv
 python3 -m venv --system-site-packages .venv-linux
 source .venv-linux/bin/activate        # fish: source .venv-linux/bin/activate.fish
 python -m meerko_bittorent
@@ -126,6 +126,13 @@ Both commands read the same `config.ini`:
 The app's **Save as default** button writes it for you; [`config.ini.example`](config.ini.example) shows the
 format. The app never saves your proxy password. If you add one to the file yourself, make the file private
 (`chmod 600` on Linux); both commands warn you if other users can read it.
+
+### File pickers on Linux
+
+The **Browse** buttons open your desktop's own file chooser (GNOME, KDE, GTK) through the XDG Desktop Portal. If no
+portal is available, Meerko falls back to a simpler built-in dialog. On tiling compositors such as Hyprland or Sway
+the portal only starts inside a systemd graphical session; on NixOS that is `programs.hyprland.withUWSM = true;`
+(then log in with the "uwsm-managed" Hyprland session). On Windows the normal Explorer dialog is used.
 
 ### Choosing a proxy
 

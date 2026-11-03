@@ -24,12 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 *   Proxy password from `config.ini`, `MEERKO_PROXY_PASSWORD`, or a hidden prompt; warning when a stored password is readable by others.
 *   Windows releases include a separate console `…-cli.exe`; the AppImage runs the CLI with `cli` as first argument.
 *   Release builds smoke-test the frozen CLI (`--version`) on Windows and Linux.
+*   Linux: the Browse buttons open the desktop's native file chooser via the XDG Desktop Portal (built-in dialog as fallback).
 
 ### Changed
 
 *   Desktop app: proxy type is a dropdown; invalid input, torrent/disk errors and lock conflicts are shown instead of
     "finished"; closing the window stops a running download cleanly.
 *   Proxy logins now work: a username selects libtorrent's authenticated SOCKS5/HTTP proxy types.
+*   Proxy form errors name the actual problem (empty host, empty port, non-numeric or out-of-range port, missing password).
+*   With a proxy the log says "Not accepting incoming connections (proxy mode)" instead of "listening on port 0".
 *   Line endings are normalized to LF via `.gitattributes`.
 *   The version now lives in `meerko_bittorent/__init__.py` (`__version__`) and is stamped from the git tag at release.
 *   `libtorrent` is pinned to 2.0.11 in `requirements.txt` (Windows builds).
