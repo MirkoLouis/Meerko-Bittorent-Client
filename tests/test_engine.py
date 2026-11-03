@@ -149,3 +149,134 @@ def test_dotdot_path_stays_inside_save_path(tmp_path):
 def test_listen_message():
     assert listen_message(0) == "Not accepting incoming connections (proxy mode)"
     assert listen_message(6881) == "Session listening on port 6881"
+
+
+from meerko_bittorent.engine import filter_trackers, finished_from, named_settings_to_libtorrent, ratio_from
+from meerko_bittorent.network import NO_HTTP_TRACKERS_NOTE, ProxyProfile, privacy_summary
+from meerko_bittorent.proxy import ProxyKind, ProxySettings
+
+DEAD_SOCKS5 = ProxySettings(ProxyKind.SOCKS5, "127.0.0.1", 9)
+DEAD_HTTP = ProxySettings(ProxyKind.HTTP, "127.0.0.1", 9)
+
+
+# Write a .torrent with the given tracker URLs (data absent); returns its path and save folder
+def torrent_with_trackers(directory, tracker_urls):
+    payload = directory / "payload.bin"
+    payload.write_bytes(os.urandom(16 * 1024))
+    file_storage = lt.file_storage()
+    lt.add_files(file_storage, str(payload))
+    creator = lt.create_torrent(file_storage)
+    # Each tracker in its own tier
+    for tier, url in enumerate(tracker_urls):
+        creator.add_tracker(url, tier)
+    lt.set_piece_hashes(creator, str(directory))
+    payload.unlink()
+    torrent_path = directory / "trackers.torrent"
+    torrent_path.write_bytes(lt.bencode(creator.generate()))
+    return torrent_path
+
+
+# Engine with a given proxy, local-only listening and a private lock folder
+def engine_with(proxy, tmp_path):
+    return Engine(proxy, listen_interfaces="127.0.0.1:0", lock_directory=tmp_path / "locks")
+
+
+# Each profile's switches really reach the libtorrent session
+@pytest.mark.parametrize(
+    ("proxy", "dht", "lsd", "anonymous"),
+    [(None, True, True, False), (DEAD_SOCKS5, True, False, True), (DEAD_HTTP, False, False, True)],
+)
+def test_session_builds_for_each_profile(tmp_path, proxy, dht, lsd, anonymous):
+    engine = engine_with(proxy, tmp_path)
+    try:
+        settings = engine.session.get_settings()
+        assert (settings["enable_dht"], settings["enable_lsd"], settings["anonymous_mode"]) == (dht, lsd, anonymous)
+        assert engine.privacy_summary == privacy_summary(proxy)
+    finally:
+        engine.close()
+
+
+# Setting names from network.py become libtorrent's numeric values
+def test_named_settings_conversion():
+    converted = named_settings_to_libtorrent({
+        "out_enc_policy": "pe_enabled",
+        "allowed_enc_level": "pe_both",
+        "choking_algorithm": "rate_based_choker",
+        "proxy_type_name": "socks5_pw",
+        "enable_dht": True,
+    })
+    assert converted["out_enc_policy"] == int(lt.enc_policy.pe_enabled)
+    assert converted["allowed_enc_level"] == int(lt.enc_level.pe_both)
+    assert converted["choking_algorithm"] == int(lt.choking_algorithm_t.rate_based_choker)
+    assert converted["proxy_type"] == int(lt.proxy_type_t.socks5_pw)
+    assert "proxy_type_name" not in converted
+    assert converted["enable_dht"] is True
+
+
+# Filtering keeps order and follows the profile
+def test_filter_trackers():
+    urls = ["udp://a:1", "http://b/announce", "UDP://c:2", "https://d/announce"]
+    assert filter_trackers(urls, ProxyProfile.HTTP) == ["http://b/announce", "https://d/announce"]
+    assert filter_trackers(urls, ProxyProfile.SOCKS5) == urls
+
+
+# HTTP mode: UDP trackers are gone from a .torrent before it can announce
+def test_http_profile_removes_udp_trackers_from_torrent_file(tmp_path):
+    torrent_path = torrent_with_trackers(tmp_path, ["http://127.0.0.1:1/announce", "udp://127.0.0.1:2/announce"])
+    engine = engine_with(DEAD_HTTP, tmp_path)
+    try:
+        download = engine.start(str(torrent_path), tmp_path)
+        assert [entry["url"] for entry in download.handle.trackers()] == ["http://127.0.0.1:1/announce"]
+        assert download.notes == []
+        download.close()
+    finally:
+        engine.close()
+
+
+# HTTP mode with only UDP trackers: none left, and the user is told (Review Focus 2)
+def test_http_profile_all_udp_trackers_leaves_note(tmp_path):
+    torrent_path = torrent_with_trackers(tmp_path, ["udp://127.0.0.1:2/announce"])
+    engine = engine_with(DEAD_HTTP, tmp_path)
+    try:
+        download = engine.start(str(torrent_path), tmp_path)
+        assert list(download.handle.trackers()) == []
+        assert download.notes == [NO_HTTP_TRACKERS_NOTE]
+        download.close()
+    finally:
+        engine.close()
+
+
+# HTTP mode: magnet trackers are filtered before the torrent is added
+def test_http_profile_filters_magnet_trackers(tmp_path):
+    magnet = (
+        "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
+        "&tr=udp%3A%2F%2F127.0.0.1%3A2%2Fannounce&tr=http%3A%2F%2F127.0.0.1%3A1%2Fannounce"
+    )
+    engine = engine_with(DEAD_HTTP, tmp_path)
+    try:
+        download = engine.start(magnet, tmp_path)
+        assert [entry["url"] for entry in download.handle.trackers()] == ["http://127.0.0.1:1/announce"]
+        download.close()
+    finally:
+        engine.close()
+
+
+# Direct mode keeps every tracker
+def test_direct_profile_keeps_udp_trackers(tmp_path):
+    torrent_path = torrent_with_trackers(tmp_path, ["http://127.0.0.1:1/announce", "udp://127.0.0.1:2/announce"])
+    engine = engine_with(None, tmp_path)
+    try:
+        download = engine.start(str(torrent_path), tmp_path)
+        assert len(list(download.handle.trackers())) == 2
+        download.close()
+    finally:
+        engine.close()
+
+
+# Protocol overhead does not count towards the 1.0 ratio (Review Focus 4)
+def test_finished_uses_payload_counters():
+    assert finished_from(True, 10, 100) is False
+    assert finished_from(True, 100, 100) is True
+    assert finished_from(False, 500, 100) is False
+    assert ratio_from(50, 100) == 0.5
+    assert ratio_from(50, 0) == 0.0
