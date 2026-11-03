@@ -169,9 +169,13 @@ def run_download(
     save_path = prepare_save_path(arguments.save_path)
 
     engine = engine_factory(proxy)
+    logging.info(engine.privacy_summary)
     reporter = ProgressReporter(sys.stderr, sys.stderr.isatty(), arguments.quiet)
     try:
         download = engine.start(source, save_path)
+        # Remarks such as "no HTTP trackers" matter even in --quiet mode
+        for note in download.notes:
+            logging.warning(note)
         try:
             # Magnets first wait for their metadata inside the shared driver
             if source.startswith(MAGNET_PREFIX):

@@ -9,7 +9,7 @@ import pytest
 from meerko_bittorent import __version__, cli
 from meerko_bittorent.errors import InputError
 from meerko_bittorent.proxy import ProxyKind, ProxySettings
-from tests.fakes import FakeEngine
+from tests.fakes import FAKE_NOTE, FAKE_PRIVACY_SUMMARY, FakeEngine
 
 MAGNET = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
 
@@ -205,3 +205,12 @@ def test_config_password_used_for_its_own_proxy(paths):
     engine = FakeEngine("finish")
     assert run_cli(paths, engine, str(paths["torrent"]), str(paths["save"])) == 0
     assert engine.proxy.password == "secret"
+
+
+# The active privacy mode and any download notes are logged at start
+def test_cli_logs_privacy_summary_and_notes(paths, caplog):
+    caplog.set_level("INFO")
+    assert run_cli(paths, FakeEngine("noted"), str(paths["torrent"]), str(paths["save"])) == 0
+    assert FAKE_PRIVACY_SUMMARY in caplog.text
+    warnings = [record.getMessage() for record in caplog.records if record.levelname == "WARNING"]
+    assert FAKE_NOTE in warnings

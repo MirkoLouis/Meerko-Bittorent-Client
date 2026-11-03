@@ -18,6 +18,7 @@ from meerko_bittorent.driver import Outcome, drive_download
 from meerko_bittorent.engine import Engine
 from meerko_bittorent.errors import AlreadyRunningError, InputError, MeerkoError
 from meerko_bittorent.file_dialogs import DialogKind, choose_path
+from meerko_bittorent.network import privacy_summary
 from meerko_bittorent.proxy import ProxyKind, ProxySettings, parse_proxy_kind, validate_port_text
 from meerko_bittorent.sources import prepare_save_path, prepare_source
 from meerko_bittorent.status import DownloadStatus, format_status
@@ -49,6 +50,12 @@ class StoppedMessage:
 
 @dataclass(frozen=True)
 class ErrorMessage:
+    text: str
+
+
+# A remark about the download, e.g. "no HTTP trackers" through an HTTP proxy
+@dataclass(frozen=True)
+class NoticeMessage:
     text: str
 
 
@@ -119,6 +126,9 @@ def run_download_worker(
     try:
         engine = engine_factory(proxy)
         download = engine.start(source, save_path)
+        # Tell the window about remarks before any progress
+        for note in download.notes:
+            messages.put(NoticeMessage(note))
         outcome = drive_download(
             download, source, stop_event, lambda status: messages.put(StatusMessage(status)), poll_interval
         )
@@ -226,6 +236,9 @@ class App(tk.Tk):
         self.progress_label.pack(fill=tk.X)
         self.progress_bar = ttk.Progressbar(progress_frame, orient="horizontal", length=100, mode="determinate")
         self.progress_bar.pack(fill=tk.X, pady=5)
+        # Always-visible line saying which privacy mode the current download uses
+        self.privacy_label = ttk.Label(progress_frame, text="Privacy: not started", wraplength=420)
+        self.privacy_label.pack(fill=tk.X)
 
     # Normal status text
     def show_status(self, text: str) -> None:
@@ -354,6 +367,7 @@ class App(tk.Tk):
         self.worker.start()
         self.progress_bar["value"] = 0
         self.show_status("Starting...")
+        self.privacy_label.config(text=f"Privacy: {privacy_summary(proxy)}")
         self.set_running(True)
 
     # Ask the worker to stop; it reports StoppedMessage when done
@@ -387,6 +401,10 @@ class App(tk.Tk):
 
     # Handle one worker message on the Tk thread
     def handle_message(self, message: object) -> None:
+        # Notes are added to the privacy line; the download keeps running
+        if isinstance(message, NoticeMessage):
+            self.privacy_label.config(text=f"{self.privacy_label.cget('text')} — {message.text}")
+            return
         if isinstance(message, StatusMessage):
             self.progress_bar["value"] = message.status.progress * 100
             self.show_status(format_status(message.status))

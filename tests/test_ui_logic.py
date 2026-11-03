@@ -10,7 +10,7 @@ import pytest
 from meerko_bittorent import ui
 from meerko_bittorent.errors import InputError
 from meerko_bittorent.proxy import ProxyKind, ProxySettings
-from tests.fakes import FakeEngine
+from tests.fakes import FAKE_NOTE, FakeEngine
 
 MAGNET = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
 
@@ -156,3 +156,11 @@ def test_browse_callback_ignores_none():
     assert written == []
     ui.apply_chosen_path(written.append, "/home/u/a.torrent")
     assert written == ["/home/u/a.torrent"]
+
+
+# Download notes reach the window before the final message
+def test_worker_sends_notes():
+    messages = run_worker(FakeEngine("noted"))
+    assert ui.NoticeMessage(FAKE_NOTE) in messages
+    assert messages.index(ui.NoticeMessage(FAKE_NOTE)) < len(messages) - 1
+    assert isinstance(messages[-1], ui.FinishedMessage)
