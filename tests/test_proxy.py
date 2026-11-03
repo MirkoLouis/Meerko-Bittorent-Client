@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Tests for proxy settings: validation, libtorrent mapping and field-by-field merging."""
+
+import pytest
+
+from meerko_bittorent.errors import InputError
+from meerko_bittorent.proxy import ProxyKind, ProxySettings, merge_proxy, parse_proxy_kind
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        ProxySettings(ProxyKind.SOCKS5, "", 1080),
+        ProxySettings(ProxyKind.SOCKS5, "a b", 1080),
+        ProxySettings(ProxyKind.SOCKS5, "host\n", 1080),
+        ProxySettings(ProxyKind.SOCKS5, "host", 0),
+        ProxySettings(ProxyKind.SOCKS5, "host", 65536),
+        ProxySettings(ProxyKind.SOCKS5, "host", 1080, password="orphan"),
+    ],
+)
+# Each invalid field is rejected with InputError
+def test_validate_rejects(settings):
+    with pytest.raises(InputError):
+        settings.validate()
+
+
+# The front-end resolves the password later, so a username alone is valid here
+def test_validate_accepts_username_without_password():
+    ProxySettings(ProxyKind.SOCKS5, "proxy.example", 1080, username="me").validate()
+
+
+# A username switches to libtorrent's authenticated proxy variants
+def test_to_libtorrent_picks_authenticated_types():
+    socks_with_login = ProxySettings(ProxyKind.SOCKS5, "h", 1080, "me", "pw").to_libtorrent()
+    http_with_login = ProxySettings(ProxyKind.HTTP, "h", 8080, "me", "pw").to_libtorrent()
+    assert socks_with_login["proxy_type_name"] == "socks5_pw"
+    assert http_with_login["proxy_type_name"] == "http_pw"
+    assert socks_with_login["proxy_username"] == "me"
+    assert socks_with_login["proxy_password"] == "pw"
+    assert ProxySettings(ProxyKind.SOCKS5, "h", 1080).to_libtorrent()["proxy_type_name"] == "socks5"
+    plain_http = ProxySettings(ProxyKind.HTTP, "h", 8080).to_libtorrent()
+    assert plain_http == {"proxy_type_name": "http", "proxy_hostname": "h", "proxy_port": 8080}
+
+
+# User-facing names parse case-insensitively; unsupported protocols are rejected
+def test_parse_proxy_kind():
+    assert parse_proxy_kind("SOCKS5") is ProxyKind.SOCKS5
+    assert parse_proxy_kind("socks5_pw") is ProxyKind.SOCKS5
+    assert parse_proxy_kind("http") is ProxyKind.HTTP
+    with pytest.raises(InputError):
+        parse_proxy_kind("socks4")
+
+
+# A single flag changes only its own field
+def test_merge_overrides_single_field():
+    base = ProxySettings(ProxyKind.SOCKS5, "a", 1080, "me")
+    merged = merge_proxy(base, None, None, 1081, None)
+    assert merged == ProxySettings(ProxyKind.SOCKS5, "a", 1081, "me")
+
+
+# Without a configured proxy, flags must describe a whole proxy
+def test_merge_without_base_requires_kind_host_port():
+    with pytest.raises(InputError):
+        merge_proxy(None, ProxyKind.SOCKS5, "h", None, None)
+    assert merge_proxy(None, None, None, None, None) is None
+    assert merge_proxy(None, ProxyKind.HTTP, "h", 8080, None) == ProxySettings(ProxyKind.HTTP, "h", 8080)
