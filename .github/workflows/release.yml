@@ -52,6 +52,19 @@ jobs:
       - name: Smoke-test frozen CLI
         run: dist/meerko-bittorent-cli.exe --version
 
+      # The runner has the Microsoft C++ runtime installed, so the smoke test cannot see whether it was bundled:
+      # check each exe's archive list (PKG-00 = app, PKG-01 = CLI) for the DLLs libtorrent imports
+      - name: Check C++ runtime is bundled
+        run: |
+          for toc in build/meerko-bittorent/PKG-0*.toc; do
+              for dll in msvcp140.dll vcruntime140.dll vcruntime140_1.dll; do
+                  if ! grep -qi "('${dll}'," "$toc"; then
+                      echo "::error::${dll} is not bundled in ${toc}"
+                      exit 1
+                  fi
+              done
+          done
+
       # Name the assets with the validated, stamped version (read back from the package)
       - name: Name release assets
         run: |

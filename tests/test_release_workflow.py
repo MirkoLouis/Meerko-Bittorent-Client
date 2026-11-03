@@ -124,3 +124,11 @@ def test_appimage_job_runs_leak_tests_on_system_libtorrent(release_workflow):
     assert "python3 -m pytest" in scripts
     for test_file in ("tests/test_network.py", "tests/test_engine.py", "tests/test_privacy_leaks.py"):
         assert test_file in scripts
+
+
+# Both Windows exes must bundle the Microsoft C++ runtime DLLs libtorrent imports, or they fail on clean PCs
+def test_windows_job_checks_cpp_runtime_is_bundled(release_workflow):
+    scripts = job_scripts(release_workflow["jobs"]["windows"])
+    assert "build/meerko-bittorent/PKG-0*.toc" in scripts
+    for dll in ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
+        assert dll in scripts
