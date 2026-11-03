@@ -31,19 +31,31 @@ class ProxyConfig:
 
 # Absolute path of the per-user config file; arguments exist so tests can simulate other platforms
 def default_config_path(is_windows: bool | None = None, environ: Mapping[str, str] | None = None) -> Path:
+    base_directory = user_base_directory("XDG_CONFIG_HOME", ".config", "APPDATA", is_windows, environ)
+    return base_directory / APPLICATION_DIRECTORY / CONFIG_FILE_NAME
+
+
+# A per-user base folder: the Windows variable on Windows, else an absolute XDG variable, else ~/<home_fallback>
+def user_base_directory(
+    xdg_variable: str,
+    home_fallback: str,
+    windows_variable: str,
+    is_windows: bool | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> Path:
     environment = os.environ if environ is None else environ
     running_on_windows = os.name == "nt" if is_windows is None else is_windows
 
-    # Windows keeps per-user application settings under %APPDATA%
+    # Windows keeps per-user application data under %APPDATA% / %LOCALAPPDATA%
     if running_on_windows:
-        return Path(environment["APPDATA"]) / APPLICATION_DIRECTORY / CONFIG_FILE_NAME
+        return Path(environment[windows_variable])
 
-    # The XDG spec says to ignore a relative XDG_CONFIG_HOME
-    xdg_config_home = environment.get("XDG_CONFIG_HOME", "")
-    if xdg_config_home and Path(xdg_config_home).is_absolute():
-        return Path(xdg_config_home) / APPLICATION_DIRECTORY / CONFIG_FILE_NAME
+    # The XDG spec says to ignore a relative value
+    xdg_directory = environment.get(xdg_variable, "")
+    if xdg_directory and Path(xdg_directory).is_absolute():
+        return Path(xdg_directory)
 
-    return Path(environment["HOME"]) / ".config" / APPLICATION_DIRECTORY / CONFIG_FILE_NAME
+    return Path(environment["HOME"]) / home_fallback
 
 
 # Parse the file strictly (duplicate sections/keys are errors); every failure names the file
